@@ -1,0 +1,108 @@
+---
+title: "World Vector Prep"
+author: "Jared Kibele"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    pandoc_args: ["--output=../docs/world_vector_prep.html"]
+---
+
+```{r setup}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+library(tidyverse)
+library(sf)
+data_dir <- "/home/shares/ohi/git-annex/land-based/wastewater"
+# Sanitation factors computed in other Rmd (effluent_density.Rmd)
+sanit_fn <- file.path(data_dir, "intermediate_files", "country_sanitation_factors.csv")
+gadm_fn <-  file.path(data_dir, "gadm36_shp/gadm36.shp")
+eez_fn <- file.path(data_dir, "World_EEZ_v10_20180221/eez_v10.shp")
+gadm_dissolve_fn <- file.path(data_dir, "intermediate_files", "gadm36_ISO3_dissolve.shp")
+world_vector_fn <- file.path(data_dir, "intermediate_files", "world_vector.shp")
+ff_raster_fn <- file.path(data_dir, "intermediate_files", "ff_raster.tif")
+```
+
+```{r vectors}
+# Read in data sets and standardize column names
+sanit <- read_csv(sanit_fn)
+sanit_countries <- sanit %>% 
+  pull(ISO3) %>% 
+  unique()
+
+# Read and standardize GADM
+# The group_by / summarize part of this take about 2 hours!!
+# So, I'll only do this if the intermediate file does not exist
+gadm_vars <- list(
+  ISO3 = sym("GID_0"),
+  name = sym("NAME_0")
+)
+
+
+if (file.exists(gadm_dissolve_fn)) {
+  gadm <- sf::read_sf(gadm_dissolve_fn) 
+  gadm$poly_type <- "GADM"
+} else {
+  gadm <- sf::read_sf(gadm_fn) %>% 
+  select(!!!gadm_vars) %>% 
+  mutate(poly_type = "GADM") %>% # This line seems not to have worked
+  group_by(ISO3) %>% 
+  summarise()
+
+  gadm %>% sf::st_write(gadm_dissolve_fn)
+}
+
+
+# Read and standardize EEZ
+eez_vars <- list(
+  ISO3 = sym("ISO_Ter1"),
+  name = sym("Territory1"),
+  poly_type = sym("Pol_type")
+)
+eez <- sf::read_sf(eez_fn) %>% 
+  select(!!!eez_vars) %>% 
+  mutate(poly_type = paste("EEZ", poly_type))
+
+# Bind together
+world_vector <- rbind(gadm, eez %>% select(-name)) %>% 
+  left_join( # Join the sanitation factors on ISO3 country code
+    sanit %>% select(ISO3, ff),
+    by = "ISO3"
+  )
+
+# Write the output to a shapefile
+file.remove(world_vector_fn)
+world_vector %>% sf::st_write(world_vector_fn)
+
+Sys.setenv(
+  WORLD_VECT_FN = world_vector_fn,
+  FF_RASTER_FN = ff_raster_fn
+)
+```
+
+## Rasterize
+
+Now that the fudge factors are attributed to polygons, we'll rasterize them.
+
+```{bash rasterize_world}
+rm $FF_RASTER_FN
+gdal_rasterize -ot Float32 -at -a ff -tr 0.008333333333334 0.008333333333334 \
+-te -180 -60 180 85 $WORLD_VECT_FN $FF_RASTER_FN 
+```
+
+## Plot the FF Raster
+
+Higher numbers indicate more raw untreated effluent.
+
+```{r plot_raster}
+library(raster)
+
+ff_rast <- raster(ff_raster_fn)
+
+pp_palette <- colorRampPalette(c("white", "yellow","brown"))
+ff_rast %>% 
+  plot(col = pp_palette(9))
+```
+

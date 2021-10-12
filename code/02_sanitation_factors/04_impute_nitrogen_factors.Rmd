@@ -1,0 +1,210 @@
+---
+title: "Impute N Factors"
+author: "last run by: `r Sys.info()['user']`"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "1_sanfact")) })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(startR)
+  library(sf)
+  library(tidyverse)
+})
+source(here::here("code", "file_names.R"))
+```
+
+```{r}
+nitrogen_factors <- read.csv(nitrogen_factors_fn,
+                             stringsAsFactors = F)
+```
+
+```{r}
+nitrogen_factors %>% 
+  filter(rural_n > 0,
+         urban_n > 0) %>% 
+  select(iso3, national_n, rural_n, urban_n) %>% 
+  gather(variable, value, -c(iso3, national_n)) %>% 
+  ggplot(aes(x = national_n, y = value)) +
+  geom_point() +
+  facet_wrap(~variable) +
+  coord_equal() +
+  theme_bw()
+```
+
+
+```{r}
+# Read in the world vector data, our ultimate target
+world_vector_n <- st_read(world_vector_fn) %>% 
+  st_set_geometry(NULL) %>% 
+  select(ISO3) %>% 
+  distinct() %>% 
+  left_join(nitrogen_factors, by = c("ISO3" = "iso3"))
+
+# Which ones are missing?
+world_vector_n %>% 
+  filter(is.na(rural_n)) %>% 
+  group_by(ISO3) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(name = countrycode::countrycode(ISO3, "iso3c", "country.name"),
+         region = countrycode::countrycode(ISO3, "iso3c", "region")) %>% 
+  select(-n) %>% 
+  knitr::kable()
+```
+
+As stated by the warning message above, the region for some of these places could not be determined. However, we can manually do it. The ones we will modify are ATF, CCK, CXR, and IOT, as seen below. In the following chunk, we create the "region" variable, and use it to group our data to calculate region-level medians for each rural / urban n factors. We then use the median to replace the missing values.
+
+```{r}
+impute_r <- function(x, medians){
+  where <- is.na(x)
+  x[where] <- medians[where]
+  return(x)
+}
+```
+
+```{r}
+normalize_score <- function(var, where, norm){
+  var[where] <- var[where] / norm[where]
+  return(var)
+}
+```
+
+
+
+```{r}
+# Start imputation
+nitrogen_factors_imputed <- world_vector_n %>%
+  mutate(region = countrycode::countrycode(
+    sourcevar = ISO3,
+    origin = "iso3c",
+    destination = "region"
+  )) %>%
+  mutate(
+    region = case_when(
+      ISO3 == "ATF" ~ "Eastern Africa",
+      ISO3 == "CCK" ~ "South-Eastern Asia",
+      ISO3 == "CXR" ~ "South-Eastern Asia",
+      ISO3 == "IOT" ~ "Southern Asia",
+      T ~ region
+    )
+  ) %>%
+  select(ISO3, region, population_thousands, contains("n")) %>%
+  mutate(imputed_urban_n_open = is.na(urban_n_open),
+         imputed_urban_n_septic = is.na(urban_n_septic),
+         imputed_urban_n_treated = is.na(urban_n_treated),
+         imputed_rural_n_open = is.na(rural_n_open),
+         imputed_rural_n_septic = is.na(rural_n_septic),
+         imputed_rural_n_treated = is.na(rural_n_treated)) %>% 
+  group_by(region) %>%                                                 # Calculate group medians before we do any imputations
+  mutate(
+    national_n_median = median(national_n, na.rm = T),
+    rural_n_river_median = median(rural_n_river, na.rm = T),
+    urban_n_river_median = median(urban_n_river, na.rm = T),
+    rural_n_open_median = median(rural_n_open, na.rm = T),
+    urban_n_open_median = median(urban_n_open, na.rm = T),
+    rural_n_septic_median = median(rural_n_septic, na.rm = T),
+    urban_n_septic_median = median(urban_n_septic, na.rm = T),
+    rural_n_treated_median = median(rural_n_treated, na.rm = T),
+    urban_n_treated_median = median(urban_n_treated, na.rm = T)
+  ) %>%
+  ungroup() %>%                                                         # If values are missing at the dev-inf, use national-inf
+  mutate(
+    rural_n_river = impute_r(rural_n_river, national_n_river),
+    urban_n_river = impute_r(urban_n_river, national_n_river),
+    rural_n_open = impute_r(rural_n_open, national_n_open),
+    urban_n_open = impute_r(urban_n_open, national_n_open),
+    rural_n_septic = impute_r(rural_n_septic, national_n_septic),
+    urban_n_septic = impute_r(urban_n_septic, national_n_septic),
+    rural_n_treated = impute_r(rural_n_treated, national_n_septic),
+    urban_n_treated = impute_r(urban_n_treated, national_n_septic),
+  ) %>%                                                                 # If values are still missing, use the geopolitical median
+  mutate(
+    national_n = impute_r(national_n, national_n_median),
+    rural_n_river = impute_r(rural_n_river, rural_n_river_median),
+    urban_n_river = impute_r(urban_n_river, urban_n_river_median),
+    rural_n_open = impute_r(rural_n_open, rural_n_open_median),
+    urban_n_open = impute_r(urban_n_open, urban_n_open_median),
+    rural_n_septic = impute_r(rural_n_septic, rural_n_septic_median),
+    urban_n_septic = impute_r(urban_n_septic, urban_n_septic_median),
+    rural_n_treated = impute_r(rural_n_treated, rural_n_treated_median),
+    urban_n_treated = impute_r(urban_n_treated, urban_n_treated_median)
+  ) %>% 
+  mutate(                                                         # Replace any missing values (for NFK) with the national median imputed above
+    rural_n_river = impute_r(rural_n_river, national_n),
+    urban_n_river = impute_r(urban_n_river, national_n),
+    rural_n_open = impute_r(rural_n_open, national_n),
+    urban_n_open = impute_r(urban_n_open, national_n),
+    rural_n_septic = impute_r(rural_n_septic, national_n),
+    urban_n_septic = impute_r(urban_n_septic, national_n),
+    rural_n_treated = impute_r(rural_n_treated, national_n),
+    urban_n_treated = impute_r(urban_n_treated, national_n),
+  ) %>%
+  select(-contains("_median"), contains("national"), -c("urban_n", "rural_n"), contains("imputed"))
+```
+
+```{r}
+nitrogen_factors_imputed %>% 
+  select(ISO3, national_n, contains("rural_n"), contains("urban_n"), -contains("river"), contains("imputed")) %>% 
+  pivot_longer(cols = 3:14, names_to = c(".value", "set"),
+               names_pattern = "(.)(.)")
+```
+
+
+```{r}
+
+imputed_dummies <- nitrogen_factors_imputed %>% 
+  select(ISO3, national_n, contains("imputed")) %>% 
+  gather(variable, imputed, -c(ISO3, national_n)) %>% 
+  mutate(variable = str_remove(variable, "imputed_"))
+
+imputed_n_plot <- nitrogen_factors_imputed %>% 
+  select(ISO3, national_n, contains("rural_n"), contains("urban_n"), -contains("river"), -contains("imputed")) %>% 
+  gather(variable, value, -c(ISO3, national_n)) %>% 
+  left_join(imputed_dummies, by = c("ISO3", "national_n", "variable")) %>% 
+  separate(col = variable, into = c("development", "n", "treatment"), sep = "_") %>% 
+  select(-n) %>% 
+  ggplot(aes(x = national_n, y = value, fill = imputed)) +
+  geom_point(color = "black", shape = 21) +
+  facet_grid(development ~ treatment) +
+  coord_equal() +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set1", direction = -1) +
+  theme(legend.justification = c(1, 1),
+        legend.position = c(1, 1)) +
+  labs(x = "National N factor",
+       y = "N factor\n(Treatment- and development-specific )",
+       fill = "Imputed")
+
+lazy_ggsave(plot = imputed_n_plot,
+            filename = "supp_n_factor_imputation",
+            width = 20,
+            height = 15)
+```
+
+
+```{r}
+file.remove(nitrogen_factors_imputed_fn)
+write.csv(nitrogen_factors_imputed,
+          file = nitrogen_factors_imputed_fn,
+          row.names = F)
+```
+
+# Reproducibility
+
+```{r}
+sessionInfo()
+```
+
+```{r}
+Sys.info()
+```
+
+
+

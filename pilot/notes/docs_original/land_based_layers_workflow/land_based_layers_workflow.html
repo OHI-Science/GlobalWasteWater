@@ -1,0 +1,234 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta http-equiv="Content-Style-Type" content="text/css" />
+  <meta name="generator" content="pandoc" />
+  <title></title>
+  <link rel="stylesheet" href="pandoc_stylesheet.css" type="text/css" />
+</head>
+<body>
+<h1 id="land-based-layers-workflow">Land-Based Layers Workflow</h1>
+<h2 id="step-1-fao">Step 1: FAO</h2>
+<p><em>Download and format FAO pesticide/fertilizer data.</em></p>
+<h3 id="get-raw-fao-fertilizer-data">Get raw FAO fertilizer data</h3>
+<ul>
+<li>go to: <a href="http://faostat.fao.org"><code class="url">http://faostat.fao.org</code></a></li>
+<li>choose classic version</li>
+<li>click 'Resources-Fertilizers' link</li>
+<li>the above steps should take you to: <a href="http://faostat.fao.org/site/575/default.aspx"><code class="url">http://faostat.fao.org/site/575/default.aspx</code></a></li>
+<li><p>select data options:</p>
+<pre><code>- country:              [World &gt; (List)]
+- year:                 select all (2002-2010)
+- item:                 select all items
+- element:              [Consumption in nutrients]
+- selected parameters:  click show</code></pre></li>
+<li><p>click download (csv format)</p></li>
+</ul>
+<h3 id="get-raw-fao-pesticide-data">Get raw FAO pesticide data</h3>
+<ul>
+<li>go to: <a href="http://faostat.fao.org"><code class="url">http://faostat.fao.org</code></a></li>
+<li>choose classic version</li>
+<li>click 'Resources-Pesticides Use' link</li>
+<li>the above steps should take you to: <a href="http://faostat.fao.org/site/424/default.aspx"><code class="url">http://faostat.fao.org/site/424/default.aspx</code></a></li>
+<li><p>select data options:</p>
+<pre><code>- country:              [World &gt; (List)]
+- year:                 select all (1990-2010)
+- item:                 select all the &quot;+ (Total)&quot; items
+- element:              [Use]
+- selected parameters:  click show</code></pre></li>
+<li><p>click download (csv format)</p></li>
+</ul>
+<h3 id="get-fao-country-codes-table">Get FAO country codes table</h3>
+<ul>
+<li>go to: <a href="http://www.fao.org/countryprofiles/modulemaker/en/"><code class="url">http://www.fao.org/countryprofiles/modulemaker/en/</code></a></li>
+<li>download &quot;Self-governing territories&quot;, XML format</li>
+</ul>
+<h3 id="get-world-bank-ag-of-gdp-table-data">Get World Bank AG % of GDP table data</h3>
+<ul>
+<li>go to: <a href="http://data.worldbank.org/indicator"><code class="url">http://data.worldbank.org/indicator</code></a></li>
+<li>click on &quot;Agriculture, value added (% of GDP)&quot;</li>
+<li>this should take you to: <a href="http://data.worldbank.org/indicator/NV.AGR.TOTL.ZS/countries"><code class="url">http://data.worldbank.org/indicator/NV.AGR.TOTL.ZS/countries</code></a></li>
+<li>click 'Download Data-&gt;XML'</li>
+</ul>
+<h3 id="get-world-bank-gdp-table-data">Get World Bank GDP table data</h3>
+<ul>
+<li>go to: <a href="http://data.worldbank.org/indicator"><code class="url">http://data.worldbank.org/indicator</code></a></li>
+<li>click on &quot;GDP (current US$)&quot;</li>
+<li>this should take you to: <a href="http://data.worldbank.org/indicator/NY.GDP.MKTP.CD/countries"><code class="url">http://data.worldbank.org/indicator/NY.GDP.MKTP.CD/countries</code></a></li>
+<li>click 'Download Data-&gt;XML'</li>
+</ul>
+<h3 id="run-scripts">Run scripts</h3>
+<ul>
+<li><p>change worldbank xml files to csv file for next step:</p>
+<pre><code>./worldbank_gdp_parse.py</code></pre></li>
+<li><p>create table of fertilizer/pesticide consumption in tonnes per country code (run twice with different year ranges; e.g. 2003-2006 and 2007-2010):</p>
+<pre><code>R --vanilla &lt;fao_update.R</code></pre></li>
+<li><p>compare/plot results from previous step (run with correct input files from previous step):</p>
+<pre><code>R --vanilla &lt;fao_compare_temporal.R</code></pre></li>
+<li><p>the <code>fao_compare_2008.R</code> script was used to compare the new methodology to the one used in the original Halpern 2008 paper</p></li>
+</ul>
+<h3 id="notes">Notes</h3>
+<ul>
+<li>Details behind FAO fertilizer methodology can be found here (note that there was a change in the methodology after 2002):<br /> <a href="http://www.fao.org/fileadmin/templates/ess/ess_test_folder/Publications/Agrienvironmental/Methodologocal_Notes_FAOSTAT2011.pdf"><code class="url">http://www.fao.org/fileadmin/templates/ess/ess_test_folder/Publications/Agrienvironmental/Methodologocal_Notes_FAOSTAT2011.pdf</code></a></li>
+<li>Also note the distinction between consumption by nutrients and consumption by weight for the fertilizer data. We have used consumption by nutrients for the final analysis, but also tried consumption by weight (see <code>fert_by_weight</code> folder for plots).</li>
+</ul>
+<hr />
+<h2 id="step-2-landcoverlanduse-lclu">Step 2: Landcover/Landuse (LCLU)</h2>
+<p><em>Download and format LCLU data.</em></p>
+<h3 id="dataset-background">Dataset background</h3>
+<ul>
+<li>desired dataset: MCD12Q1 V051: land cover type 1 (IGBP)</li>
+<li>relevant links:
+<ul>
+<li><a href="http://www.bu.edu/lcsc/data-documentation/"><code class="url">http://www.bu.edu/lcsc/data-documentation/</code></a></li>
+<li><a href="http://earthobservatory.nasa.gov/Newsroom/view.php?id=22585"><code class="url">http://earthobservatory.nasa.gov/Newsroom/view.php?id=22585</code></a></li>
+<li><a href="https://lpdaac.usgs.gov/products/modis_products_table/mcd12q1"><code class="url">https://lpdaac.usgs.gov/products/modis_products_table/mcd12q1</code></a></li>
+</ul></li>
+</ul>
+<h3 id="download-dataset">Download dataset</h3>
+<ul>
+<li>go to: <a href="http://reverb.echo.nasa.gov/reverb/"><code class="url">http://reverb.echo.nasa.gov/reverb/</code></a></li>
+<li><p>follow these steps:</p>
+<pre><code>- Search Terms: mcd12q1
+- Temporal Search:  
+  start:  2005-01-01 00:00:00
+  end:    2005-12-31 23:59:59
+- [press enter]
+- Select Datasets: MCD12Q1 version 51
+- [Press: Search for Granules]
+- [Press: Accept]
+- [Press: All Shopping Cart button]
+- [Press: View Items in Cart]
+- [Press: Download]
+- Select URLs to Download:  Data
+- Select Download Option:  Text File
+- Press:  Save
+- [Press: Download]
+- Select URLs to Download:  Metadata
+- Select Download Option:  Text File
+- Press:  Save</code></pre></li>
+<li><p>after downloading, empty basket from last step and then repeat above steps with:</p>
+<pre><code>- Temporal Search:  
+  start:  2009-01-01 00:00:00
+  end:    2009-12-31 23:59:59</code></pre></li>
+</ul>
+<h3 id="run-scripts-1">Run scripts</h3>
+<ul>
+<li><p>download hdf files:</p>
+<pre><code>./go_download_files.sh</code></pre></li>
+<li><p>merge hdfs into single tif with igbp landcover classes, for both years:</p>
+<pre><code>./hdf_to_tif.sh</code></pre></li>
+</ul>
+<h3 id="notes-1">Notes</h3>
+<ul>
+<li>We also tried to use the UMD classification (see <code>global_landcover/umd</code>), but used the IGBP classification for the final analysis.</li>
+<li><p>Some classification statistics (number of 500 m^2 pixels):</p>
+<pre><code>umd classification:
+  landclass 12 (cropland),  2005:              76716687
+  landclass 12 (cropland),  2009:              76463693
+  landclass 13 (urban),     2005:              3063063
+  landclass 13 (urban),     2009:              3062706
+
+igbp classification:
+  landclass 12 (cropland),  2005:              56632531
+  landclass 12 (cropland),  2009:              56090829
+  landclass 14 (cropland/natural veg),  2005:  42801682
+  landclass 14 (cropland/natural veg),  2009:  41760296
+  landclass 13 (urban),     2005:              3058152
+  landclass 13 (urban),     2009:              3056223</code></pre></li>
+</ul>
+<hr />
+<h2 id="step-3-dasym-prepare">Step 3: Dasym Prepare</h2>
+<p><em>Prepare data for dasymetric mapping. This step splits global landcover rasters by continents.</em></p>
+<ul>
+<li><p>run continent/countries raster prep script:</p>
+<pre><code>C:\Python27\ArcGIS10.1\python.exe
+  [3]_dasym_prepare\landcover_countries_continents_split.py</code></pre></li>
+<li><p>(<em>Note</em>: when re-running above script, use fresh/original shp file for countries_units.shp in case .prj disappears during last run)</p></li>
+</ul>
+<hr />
+<h2 id="step-4-dasym">Step 4: Dasym</h2>
+<p><em>Run dasymetric mapping.</em></p>
+<h3 id="run-scripts-2">Run scripts</h3>
+<ul>
+<li>use <code>run_dasym.sh</code> to run <code>dasym_map.py</code> multiple times for each continent, year, pest/fert combination</li>
+</ul>
+<h3 id="notes-2">Notes</h3>
+<ul>
+<li>relevant links:<br /> <a href="http://portal.nceas.ucsb.edu/Members/perry/methods/dasymetric-mapping/"><code class="url">http://portal.nceas.ucsb.edu/Members/perry/methods/dasymetric-mapping/</code></a><br /> <a href="http://portal.nceas.ucsb.edu/Members/perry/methods/dasymetric_flowchart2.png/image_view_fullscreen"><code class="url">http://portal.nceas.ucsb.edu/Members/perry/methods/dasymetric_flowchart2.png/image_view_fullscreen</code></a><br /> <a href="https://github.com/scw/global-threats-model/tree/master/Dasymetric"><code class="url">https://github.com/scw/global-threats-model/tree/master/Dasymetric</code></a></li>
+</ul>
+<hr />
+<h2 id="step-5-zonal-stats">Step 5: Zonal Stats</h2>
+<p><em>Calculate zonal statistics for each continent -- sums of fertilizer/pesticide values for each basin.</em></p>
+<ul>
+<li><p>run zonal stats script:</p>
+<pre><code>C:\Python27\ArcGIS10.1\python.exe [5]_zonal_stats\terra_stats.py</code></pre></li>
+<li><p>(<em>Note</em>: you'll need to create blank af, as, etc dirs first in <code>[5]_zonal_stats\output</code>)</p></li>
+</ul>
+<hr />
+<h2 id="step-6-global-plume-prepare">Step 6: Global Plume Prepare</h2>
+<p><em>Prepare global plume data. This step updates global plume shapefile fertilizer/pesticide sum values to the new basin zonal statistics.</em></p>
+<ul>
+<li>first, create blank <code>global_plume*.shp</code> files by resetting the DBF fields to zero via <code>zero_dbf.py</code> (resulting shapefiles can be found in <code>output/og_blank</code>)</li>
+<li>run <code>update_global_plume.py</code> twice, with different years</li>
+<li>run <code>clean_global_plume.py</code> twice for both time periods to remove zero fert/pest values<br /> (note: this script will not update FIDs)</li>
+<li><p>split up global plume shapefile into parts (for easier processing in next step; sizes are arbitrary):</p>
+<pre><code>ogr2ogr -f &quot;ESRI Shapefile&quot; global_plume_2003_2006_1.shp \
+        -where &quot;FID&lt;35000&quot; global_plume_2003_2006.shp
+ogr2ogr -f &quot;ESRI Shapefile&quot; global_plume_2003_2006_2.shp \
+        -where &quot;FID&gt;=35000 AND FID&lt;70000&quot; global_plume_2003_2006.shp
+ogr2ogr -f &quot;ESRI Shapefile&quot; global_plume_2003_2006_3.shp \
+        -where &quot;FID&gt;=70000 AND FID&lt;105000&quot; global_plume_2003_2006.shp
+ogr2ogr -f &quot;ESRI Shapefile&quot; global_plume_2003_2006_4.shp \
+        -where &quot;FID&gt;=105000&quot; global_plume_2003_2006.shp
+
+ogr2ogr -f &quot;ESRI Shapefile&quot; global_plume_2007_2010_1.shp \
+        -where &quot;FID&lt;35000&quot; global_plume_2007_2010.shp
+ogr2ogr -f &quot;ESRI Shapefile&quot; global_plume_2007_2010_2.shp \
+        -where &quot;FID&gt;=35000 AND FID&lt;70000&quot; global_plume_2007_2010.shp
+ogr2ogr -f &quot;ESRI Shapefile&quot; global_plume_2007_2010_3.shp \
+        -where &quot;FID&gt;=70000 AND FID&lt;105000&quot; global_plume_2007_2010.shp
+ogr2ogr -f &quot;ESRI Shapefile&quot; global_plume_2007_2010_4.shp \
+        -where &quot;FID&gt;=105000&quot; global_plume_2007_2010.shp</code></pre></li>
+</ul>
+<hr />
+<h2 id="step-7-plume-model">Step 7: Plume Model</h2>
+<p><em>Run global plume model.</em></p>
+<ul>
+<li><p>run <code>plume_distributions.R</code> script (will need to install maptools package in R: install.packages('maptools')). Use the &quot;0.05%&quot; values in log output to manually update <code>plume_buffer.py</code> limits values for pesticides and fertilizer.</p>
+<pre><code>$ R --vanilla &lt; plume_distributions.R</code></pre></li>
+<li><p>launch grass64:</p>
+<pre><code># define new location: get projection from global_plume_*.shp
+# import global plume vector piece
+v.in.ogr dsn=&quot;impact_layers_redo/land_based/ \
+  [6]_plume_prepare/output/global_plume_2003_2006_pieces/global_plume_2003_2006_1.shp&quot; \
+  output=&quot;pours&quot;
+# import ocean mask
+r.in.gdal -o input=&quot;impact_layers_redo/land_based/[0]_og_input/ocean_mask/ocean_mask.tif&quot; \
+  output=ocean
+# run plume buffer model
+python plume_buffer.py pours
+# export grass plume rasters as .tif files
+./export_plumes.sh
+# repeat above for other plume pieces
+# tip 1: run 8 pieces simultaneously during plume_buffer.py for efficiency
+# tip 2: if needed, use &#39;clean_plumes.sh&#39; to erase/re-do plume rasters</code></pre></li>
+<li><p>combine plumes into single global raster:</p>
+<pre><code>./gdal_add.py -o global_plumes_pest_2003_2006_raw.tif -ot Float32 plume_pest*.tif
+./gdal_add.py -o global_plumes_fert_2003_2006_raw.tif -ot Float32 plume_fert*.tif
+# note: may need to add plumes in stages</code></pre></li>
+<li><p>repeat above steps for other time period</p></li>
+</ul>
+<hr />
+<h2 id="step-8-plume-finalize">Step 8: Plume Finalize</h2>
+<p><em>Produce final products.</em></p>
+<ul>
+<li>run <code>difference_rasters.py</code> to create change detection rasters</li>
+<li>run <code>log_normalize_rasters.py</code> to log-normalize yearly and difference plume rasters</li>
+<li>run <code>plume_plots.m</code> in matlab to produce histogram figures of final rasters</li>
+</ul>
+<hr />
+<p>John Potapenko, January-August 2013 (john@scigeo.org)</p>
+</body>
+</html>

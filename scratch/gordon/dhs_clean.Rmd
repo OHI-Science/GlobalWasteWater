@@ -1,0 +1,82 @@
+---
+title: "clean attempts dhs"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Set credentials for DHS
+```{r}
+
+library(rdhs)
+library(tidyverse)
+set_rdhs_config(email = "gordonblasco@gmail.com",
+                project = "Global Wastewater")
+```
+
+
+```{r}
+
+ls <- list.files("/home/blasco/.cache/rdhs/datasets") %>% 
+  as.data.frame () %>% 
+  rename(file_name = ".") %>% 
+  mutate(file_name = as.character(file_name)) %>% 
+  filter((str_detect(file_name, pattern = ".rds$"))) #%>% 
+  mutate(path = paste("/home/blasco/.cache/rdhs/datasets", file_name, sep = "/" )) %>%
+  head(1) %>% 
+  mutate(data = map(path, readRDS))
+
+x <- ls$data[1]
+
+x <- readRDS("/home/blasco/.cache/rdhs/datasets/AFBR70DT.rds")
+
+```
+
+# Use DHS api to extract data
+```{r}
+indicators <- dhs_indicators()
+indicators[1,]
+
+tags <- dhs_tags()
+
+# 70 is the tag for toilet facilities
+
+
+data <- dhs_data(tagIds          = 70,
+                 countryIds      = c(),
+                 breakdown       ="background",
+                 surveyYearStart = 2010,
+                 returnGeometry  = TRUE)
+
+
+sc <- dhs_survey_characteristics()
+```
+
+
+
+# 
+```{r}
+available <- get_available_datasets()
+
+countries <- available %>% distinct(DHS_CountryCode)
+
+get_all_dhs_data <- function(country) {
+  
+  this_data   <- dhs_data(tagIds   = 70,
+                       countryIds      = c(country),
+                       breakdown       ="background",
+                       surveyYearStart = 2010:2015,
+                       returnGeometry  = TRUE)
+  
+}
+
+possibly_get_dhs = possibly(get_all_dhs_data, otherwise = "something wrong here")
+
+
+countries_data <- countries %>% 
+  mutate(data = map(DHS_CountryCode, possibly_get_dhs))
+```
+

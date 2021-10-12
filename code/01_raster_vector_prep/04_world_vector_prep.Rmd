@@ -1,0 +1,93 @@
+---
+title: "World Vector Prep"
+author: "Jared Kibele"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs")) })
+---
+
+```{r setup}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+suppressPackageStartupMessages({
+  library(here)
+  library(tidyverse)
+  library(sf)
+  library(lwgeom)
+})
+
+# set file paths
+source(here("code", "file_names.R"))
+```
+
+We need to combine the land and marine polygons. First, the land polygons need to be dissolved. Here, we read the file in `r gadm_fn` and dissolve it at the nation level. Then we'll combine that with the EEZs (`r eez_fn`) and export it as `r world_vector_fn`.
+
+# GADM
+
+```{r gadm}
+# Read and standardize GADM
+# The group_by / summarize part of this takes about 2 hours!!
+# So, I'll only do this if the intermediate file does not exist
+gadm_vars <- list(
+  ISO3 = sym("GID_0"),
+  name = sym("NAME_0")
+)
+
+
+if (file.exists(gadm_dissolve_fn)) {
+  gadm <- sf::read_sf(gadm_dissolve_fn) 
+  gadm$poly_type <- "GADM"
+} else {
+  gadm <- sf::read_sf(gadm_fn) %>% 
+    select(!!!gadm_vars) %>% 
+    mutate(poly_type = "GADM") %>% 
+    group_by(ISO3) %>% 
+    summarise() %>% 
+    ungroup()
+  
+  gadm %>% sf::st_write(gadm_dissolve_fn)
+}
+```
+
+# EEZs
+
+```{r eezs}
+# Read and standardize EEZ
+eez_vars <- list(
+  ISO3 = sym("ISO_Ter1"),
+  name = sym("Territory1"),
+  poly_type = sym("Pol_type")
+)
+eez <- sf::read_sf(eez_fn) %>% 
+  select(!!!eez_vars) %>% 
+  mutate(poly_type = paste("EEZ", poly_type),
+         ISO3 = ifelse(ISO3 %in% c("ASC", "TAA"), "SHN", ISO3)) %>%  #Reassign Asencion and Tristan to Santa Helena
+  st_make_valid() %>% 
+  st_crop(c(xmin = -180L, ymin = -90L, xmax = 180L, ymax = 90L))
+```
+
+
+```{r combine}
+# Bind together
+world_vector <- rbind(gadm, eez %>% select(-name)) %>% 
+  st_transform(crs = "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs")
+```
+
+```{r plot}
+plot(world_vector, max.plot = 1)
+```
+
+```{r export}
+# Write the output to a shapefile
+file.remove(world_vector_fn)
+world_vector %>%
+  sf::st_write(world_vector_fn)
+```
+
+
+

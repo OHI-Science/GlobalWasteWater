@@ -1,0 +1,260 @@
+---
+title: "Quantifying gaps in the data"
+author: "Gordon Blasco"
+date: "10/16/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, incude = FALSE}
+library(tidyverse)
+library(here)
+library(raster)
+library(fasterize)
+library(sf)
+library(countrycode)
+
+source(here("code", "file_names.R"))
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+## load in sanitation data
+sanit <- read.csv(sanit_factors_fn,
+                  stringsAsFactors = F) %>% 
+  dplyr::select(iso3, rural_sf, urban_sf)
+
+country_codes <- countrycode::codelist %>% 
+  dplyr::select(#"un.name.en", 
+         country.name.en, iso3n, iso2c, iso3c) %>% 
+  rename(ISO3 = iso3c)
+
+
+
+
+```
+
+# pull national level data as well. 
+```{r}
+sanfac <- read_csv(file.path(intermediate_dir, "clean_sanfac_2019.csv")) %>% 
+  mutate_at(vars(6:44), parse_number) %>% 
+  filter(year == 2015) 
+
+
+national <- sanfac %>% 
+  dplyr::select(country, iso3, year, population_thousands,
+         national_at_least_basic, 
+         national_limited_shared, 
+         national_unimproved, 
+         national_open_defecation, 
+         national_excluding_shared_safely_managed,
+         national_excluding_shared_disposed_in_situ,
+         national_excluding_shared_emptied_and_treated,
+         national_including_shared_latrines_and_other, 
+         national_including_shared_septic_tanks, 
+         national_including_shared_sewer_connections
+  ) %>% 
+    mutate(national_open = national_unimproved + national_open_defecation +national_including_shared_latrines_and_other,
+           national_septic = national_including_shared_septic_tanks,
+           national_treated = national_including_shared_sewer_connections,
+         #national_total = national_open + national_septic + national_treated
+         ) %>% 
+  filter(!(is.na(national_open) & is.na(national_septic) & is.na(national_treated))) %>% 
+  mutate_at(c("national_open","national_septic","national_treated"), replace_na, 0) %>% 
+  mutate(national_sf = national_open+national_septic+national_treated) %>% 
+  dplyr::select(iso3, national_sf)
+  
+# sanit <- read.csv(sanit_factors_fn,
+#                   stringsAsFactors = F)
+
+
+world_vector_sf <- st_read(world_vector_fn) %>% 
+  left_join(sanit, by = c("ISO3" = "iso3")) %>% 
+  left_join(national, by = c("ISO3" = "iso3"))
+
+
+
+```
+
+
+
+
+### List of countries without rural or urban data
+```{r}
+
+missings <- as.data.frame(world_vector_sf) %>% 
+  dplyr::select(ISO3, rural_sf, urban_sf, national_sf)  %>% 
+  left_join(country_codes)  %>% 
+  distinct(ISO3, .keep_all = TRUE) 
+
+miss_has_nat <- missings %>% 
+  filter(is.na(urban_sf)) %>% 
+  summarise(
+    national_available = sum(!is.na(national_sf)),
+    national_unavailable = sum(is.na(national_sf))
+  )
+
+sanfac_countries <- missings %>% 
+  summarise(
+    total_vectors = length(ISO3),
+    has_urban_rural = sum(!is.na(urban_sf)),
+    missing_urban_rural = sum(is.na(urban_sf))
+  ) %>% 
+  bind_cols(miss_has_nat)
+
+
+mystery_iso <- missings %>% 
+  filter(is.na(country.name.en)) %>% 
+  dplyr::select(ISO3)
+```
+
+
+```{r}
+calories <- read.csv(calories_fn) %>% 
+  dplyr::select(iso3c, kcal_cap_day, protein_g_cap_day) %>% 
+  rename(ISO3 = iso3c) %>% 
+  filter(!is.na(kcal_cap_day))
+
+world_vector_sf_cal <- st_read(world_vector_fn) %>% 
+  left_join(calories) 
+
+missing_cal <- as.data.frame(world_vector_sf_cal) %>% 
+  dplyr::select(ISO3, kcal_cap_day) %>% 
+  left_join(country_codes) %>% 
+  distinct(ISO3, .keep_all = TRUE)
+
+
+missing_cal_summary <- missing_cal %>% 
+  summarise(
+    total_vectors = length(ISO3),
+    has_calories = sum(!is.na(kcal_cap_day)),
+    missing_calories = sum(is.na(kcal_cap_day)))
+
+```
+
+
+### This is a list of ISO3 codes in the world_vector_fn that are not in the countrycode package and I have not been able to track them down online.
+```{r}
+mystery_iso
+```
+
+```{r}
+countries_in_vector <- unique(world_vector_sf$ISO3)
+countries_in_sf <- unique(sanfac$iso3)
+
+sum(countries_in_vector %in% countries_in_sf) #This returns the number of common matches
+```
+
+
+### Full list of missings
+```{r}
+
+all_missings <- st_read(world_vector_fn) %>% 
+  left_join(sanit, by = c("ISO3" = "iso3")) %>% 
+  left_join(national, by = c("ISO3" = "iso3")) %>% 
+  left_join(calories)
+
+all_missings_list <- as.data.frame(all_missings) %>% 
+  dplyr::select(ISO3, rural_sf, urban_sf, national_sf, kcal_cap_day)  %>% 
+  left_join(country_codes)  %>% 
+  distinct(ISO3, .keep_all = TRUE) %>% 
+  dplyr::select(-iso3n, -iso2c) %>% 
+  dplyr::select(ISO3, country.name.en, everything()) %>% 
+  filter(!(!is.na(rural_sf) &
+         !is.na(urban_sf) &
+         !is.na(national_sf) &
+         !is.na(kcal_cap_day) )
+           )
+
+
+#write_csv(all_missings_list, "missing_data.csv")
+
+```
+
+
+missing urban and rural data
+```{r}
+
+
+missing_rural <- all_missings_list %>% 
+  filter(is.na(rural_sf)) %>% 
+  mutate(missing_rural_urban = 1)
+
+missing_rural_map <- st_read(world_vector_fn) %>% 
+  left_join(missing_rural)
+
+plot(missing_rural_map[, "missing_rural_urban"], main = "Missing urban/rural sanitation factors")
+
+```
+
+
+```{r}
+missing_rural_has_national_df <- all_missings_list %>% 
+  filter(is.na(rural_sf)) %>% 
+  filter(!is.na(national_sf)) %>% 
+  mutate(missing_rural_urban_has_national = 1)
+
+
+
+has_national_map <- st_read(world_vector_fn) %>% 
+  left_join(missing_rural_has_national_df)
+
+plot(has_national_map[, "missing_rural_urban_has_national"], main = "Missing urban/rural sanitation factors but has national data")
+```
+
+
+```{r}
+missing_rural_and_national_df <- all_missings_list %>% 
+  filter(is.na(rural_sf)) %>% 
+  filter(is.na(national_sf)) %>% 
+  mutate(missing_both = 1)
+
+names_and_iso <- missing_rural_and_national_df %>% 
+  dplyr::select(ISO3, country.name.en) %>% 
+  pull(ISO3)
+
+
+
+both_missing_map <- st_read(world_vector_fn) %>% 
+  left_join(missing_rural_and_national_df)
+
+plot(both_missing_map[, "missing_both"], main = "Missing urban/rural and national sanitation factors")
+
+```
+
+```{r}
+paste(names_and_iso)
+```
+
+
+```{r}
+missing_calorie_data <- all_missings_list %>% 
+  filter(is.na(kcal_cap_day)) %>% 
+  mutate(missing_calorie = 1)
+
+has_national_map <- st_read(world_vector_fn) %>% 
+  left_join(missing_calorie_data)
+
+plot(has_national_map[, "missing_calorie"], main = "Missing FAO food supply data")
+```
+
+
+
+```{r}
+iso_missings <- c("ALA", "ATA", "ATF", "BES", "BLM", "BVT", "CCK", "COK", "CXR", "ESH", "FJI", "GGY", "HMD", "IMN",
+"IOT", "JEY", "KNA", "MAC", "MAF", "NCL", "NFK", "PCN", "SGS", "SJM", "SPM", "TKL", "TWN", "UMI",
+"VAT", "WLF", "XAD", "XCA", "XCL", "XKO", "XNC", "XPI", "XSP", "ASC", "TAA", "CPT")
+```
+
+
+
+
+
+
+
+
+
+

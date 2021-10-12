@@ -1,0 +1,253 @@
+---
+title: "Create Sanitation Factors"
+author: "last run by: `r Sys.info()['user']`"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "1_sanfact")) })
+---
+
+Code was originally written by GB and later modified by JCVD. Refer to GitHub to see who did what.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+```{r}
+
+library(GGally)
+library(tidyverse)
+
+
+source(here::here("code","file_names.R"))
+
+
+```
+
+# Read in the data clean the numbers and filter for 2015
+
+```{r}
+sanfac <- read_csv(file.path(intermediate_dir, "clean_sanfac_2019.csv")) %>% 
+  mutate_at(vars(6:44), parse_number) %>% 
+  filter(year == 2015)
+```
+
+# calculate the rural sanitaion factors
+
+```{r}
+rural <- sanfac %>% 
+  select(country, iso3, year, population_thousands, percent_urban,
+         rural_at_least_basic,
+         rural_limited_shared, 
+         rural_unimproved, 
+         rural_open_defecation,
+         rural_excluding_shared_safely_managed,
+         rural_excluding_shared_emptied_and_treated,
+         rural_excluding_shared_disposed_in_situ,
+         rural_excluding_shared_wastewater_treated,
+         rural_including_shared_latrines_and_other, 
+         rural_including_shared_septic_tanks, 
+         rural_including_shared_sewer_connections) %>% 
+  mutate(rural_open = rural_unimproved + rural_open_defecation +rural_including_shared_latrines_and_other,
+         rural_septic = rural_including_shared_septic_tanks,
+         rural_treated = rural_including_shared_sewer_connections,
+         rural_total = rural_open + rural_septic + rural_treated)
+
+check_rural<- rural %>% 
+  mutate(check_col = rural_including_shared_latrines_and_other + rural_including_shared_septic_tanks + rural_including_shared_sewer_connections,
+         matcher = rural_at_least_basic + rural_limited_shared) %>%
+  mutate(checker = case_when(
+    abs(round(check_col,0) - round(matcher,0)) <=1 ~ TRUE
+  ))
+
+rural_for_bind <- rural %>% 
+  select(country, iso3, year, population_thousands, percent_urban,
+         rural_open, rural_septic, rural_treated) %>% 
+  filter(!(is.na(rural_open) & is.na(rural_septic) & is.na(rural_treated)))
+
+
+```
+
+# calculate the urban sanitation factors
+
+```{r}
+
+urban <- sanfac %>% 
+  select(country, iso3, year, population_thousands, percent_urban,
+         urban_at_least_basic,
+         urban_limited_shared, 
+         urban_unimproved, 
+         urban_open_defecation,
+         urban_excluding_shared_safely_managed,
+         urban_excluding_shared_emptied_and_treated,
+         urban_excluding_shared_disposed_in_situ,
+         urban_excluding_shared_wastewater_treated,
+         urban_including_shared_latrines_and_other, 
+         urban_including_shared_septic_tanks, 
+         urban_including_shared_sewer_connections) %>% 
+  mutate(urban_open = urban_unimproved + urban_open_defecation +urban_including_shared_latrines_and_other,
+         urban_septic = urban_including_shared_septic_tanks,
+         urban_treated = urban_including_shared_sewer_connections,
+         urban_total = urban_open + urban_septic + urban_treated)
+
+check_urban <- urban %>% 
+  mutate(check_col = urban_including_shared_latrines_and_other + urban_including_shared_septic_tanks + urban_including_shared_sewer_connections,
+         matcher = urban_at_least_basic + urban_limited_shared) %>%
+  mutate(checker = case_when(
+    abs(round(check_col,0) - round(matcher,0)) <=1 ~ TRUE
+  ))
+
+urban_for_bind <- urban %>% 
+  select(country, iso3, year, population_thousands, percent_urban,
+         urban_open, urban_septic, urban_treated) %>% 
+  filter(!(is.na(urban_open) & is.na(urban_septic) & is.na(urban_treated)))
+
+
+
+```
+
+
+# calculate the national sanitation factors
+
+```{r}
+
+national <- sanfac %>% 
+  select(country, iso3, year, population_thousands, percent_urban,
+         national_at_least_basic,
+         national_limited_shared, 
+         national_unimproved, 
+         national_open_defecation,
+         national_excluding_shared_safely_managed,
+         national_excluding_shared_emptied_and_treated,
+         national_excluding_shared_disposed_in_situ,
+         national_excluding_shared_wastewater_treated,
+         national_including_shared_latrines_and_other, 
+         national_including_shared_septic_tanks, 
+         national_including_shared_sewer_connections) %>% 
+  mutate(national_open = national_unimproved + national_open_defecation +national_including_shared_latrines_and_other,
+         national_septic = national_including_shared_septic_tanks,
+         national_treated = national_including_shared_sewer_connections,
+         national_total = national_open + national_septic + national_treated)
+
+check_national <- national %>% 
+  mutate(check_col = national_including_shared_latrines_and_other + national_including_shared_septic_tanks + national_including_shared_sewer_connections,
+         matcher = national_at_least_basic + national_limited_shared) %>%
+  mutate(checker = case_when(
+    abs(round(check_col,0) - round(matcher,0)) <=1 ~ TRUE
+  ))
+
+national_for_bind <- national %>% 
+  select(country, iso3, year, population_thousands, percent_urban,
+         national_open, national_septic, national_treated) %>% 
+  filter(!(is.na(national_open) & is.na(national_septic) & is.na(national_treated)))
+
+
+
+```
+
+### What percent of the world's population uses septic and open?
+
+```{r}
+pct_world_open_septic_df <- national_for_bind %>%                                       # Start with national data
+  select(iso3, population_thousands, national_open, national_septic) %>%             # Keep only relevant columns
+  replace_na(replace = list(national_open = 0, national_septic = 0)) %>%             # Replace NA's with zeroes (for summation)
+  mutate(bad_pct = (national_open + national_septic) / 100,                          # Sum pct open and pct septic to obtain pct_bad, convert to ratio
+         pop = population_thousands * bad_pct)                                       # Multiply ratio times population size to obtain abs values
+
+pct_world_open_septic <- 100 * (sum(pct_world_open_septic_df$pop) / sum(pct_world_open_septic_df$population_thousands))     # Calculate total bad / total world pop
+```
+
+`r pct_world_open_septic`% of the people in the world use open or septic sanitation.
+
+## FIO
+
+### set the sanitaion weight parameters
+
+```{r}
+treat_param <- 0.01 #6
+septic_param <- 0.3 * 0.00001 #7.4 
+open_param <- 0.2 #7.2
+
+#Parameters from Kay 2008
+```
+
+# bind into one data frame and weight the sanitaion factors
+
+```{r}
+national_sanitation_factors_2015 <- rural_for_bind %>% 
+  full_join(urban_for_bind) %>% 
+  full_join(national_for_bind) %>% 
+  mutate_at(vars(6:14), replace_na, 0) %>% 
+  mutate(
+    rural_sf = (treat_param  * 0.01 * rural_treated) +
+      (septic_param * 0.01 * rural_septic)  +
+      (open_param   * 0.01 * rural_open),
+    rural_sf_septic = (treat_param * 0.01 * rural_treated) ,
+    urban_sf = (treat_param  * 0.01 * urban_treated) +
+      (septic_param * 0.01 * urban_septic)  +
+      (open_param   * 0.01 * urban_open),
+    urban_sf_septic = (treat_param  * 0.01 * urban_treated) ,
+    national_sf = (treat_param  * 0.01 * national_treated) +
+      (septic_param * 0.01 * national_septic)  +
+      (open_param   * 0.01 * national_open), 
+    national_sf_septic = (treat_param  * 0.01 * national_treated))%>% 
+  mutate(rural_sf = ifelse(rural_sf > 1, 1, rural_sf),
+         urban_sf = ifelse(urban_sf > 1, 1, urban_sf),
+         national_sf = ifelse(national_sf > 1, 1, national_sf),
+         rural_sf_septic = ifelse(rural_sf_septic > 1, 1, rural_sf_septic),
+         urban_sf_septic = ifelse(urban_sf_septic > 1, 1, urban_sf_septic),
+         national_sf_septic = ifelse(national_sf_septic > 1, 1, national_sf_septic))
+```
+
+## Nitrogen passing rates
+
+### set passing-removal parameters
+
+The following numbers tell us the proportion of N that is NOT filtered or removed by each type of infrastructure. For example, an open parameter of 1 indicates that all N flows into the environment.
+
+```{r}
+n_treat_param <- 0.45
+n_septic_param <- 0.2
+n_open_param <- 1
+```
+
+We can now use these parameters to estimate a sanitation factor. This will be assigned based on the proportion of the population that has access to each type of infrastructure on urban and rural environments. We also create a score that will be used for locations > 1 km away from surface waters (rivers), since N would hardly enter these.
+
+As a side, we also calculate treatment-specific sanitation factors to perform an attribution experiment later on.
+
+```{r}
+nitrogen_factors <- rural_for_bind %>% 
+  full_join(urban_for_bind) %>% 
+  full_join(national_for_bind) %>% 
+  mutate(
+    # rural parameters
+    rural_n_open = (n_open_param * 0.01 * rural_open),
+    rural_n_septic = (n_septic_param * 0.01 * rural_septic),
+    rural_n_treated = (n_treat_param * 0.01 * rural_treated),
+    rural_n = rural_n_open + rural_n_septic + rural_n_treated,
+    rural_n_river = rural_n_treated,
+    # urban parameters
+    urban_n_open = (n_open_param * 0.01 * urban_open),
+    urban_n_septic = (n_septic_param * 0.01 * urban_septic),
+    urban_n_treated = (n_treat_param * 0.01 * urban_treated),
+    urban_n = urban_n_open + urban_n_septic + urban_n_treated,
+    urban_n_river = urban_n_treated,
+    # National parameters
+    national_n_open = (n_open_param   * 0.01 * national_open),
+    national_n_septic = (n_septic_param * 0.01 * national_septic),
+    national_n_treated = (n_treat_param  * 0.01 * national_treated),
+    national_n = national_n_open + national_n_septic + national_n_treated,
+    national_n_river = (n_treat_param  * 0.01 * national_treated)
+    ) %>% 
+  mutate_at(vars(contains("_n")), pmin, 1) %>%
+  select(iso3, population_thousands, percent_urban, national_n, urban_n, rural_n, national_n_river, urban_n_river, rural_n_river, national_n_open, urban_n_open, rural_n_open, national_n_septic, urban_n_septic, rural_n_septic, national_n_treated, urban_n_treated, rural_n_treated)
+```
+
+## save the csvs
+
+```{r}
+write_csv(national_sanitation_factors_2015, file.path(sanit_factors_fn))
+
+write.csv(nitrogen_factors, file.path(nitrogen_factors_fn), row.names = F)
+```
+

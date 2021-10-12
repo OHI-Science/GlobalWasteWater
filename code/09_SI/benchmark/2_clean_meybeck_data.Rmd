@@ -1,0 +1,111 @@
+---
+title: "Download and clean benchmark data"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    code_folding: show
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "benchmark")) })
+---
+
+
+```{r setup}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+# Load packages
+suppressPackageStartupMessages({
+  library(here)
+  library(janitor)
+  library(countrycode)
+  library(knitr)
+  library(kableExtra)
+  library(rnaturalearth)
+  library(cowplot)
+  library(tidyverse)
+})
+
+source(here("code", "file_names.R"))
+```
+
+# About the data
+
+Meybeck, Michel; Ragu, Alain (2012): GEMS-GLORI world river discharge database. Laboratoire de Géologie Appliquée, Université Pierre et Marie Curie, Paris, France, PANGAEA, https://doi.org/10.1594/PANGAEA.804574
+
+
+
+```{r}
+# Set url for the data
+url <- "https://doi.pangaea.de/10.1594/PANGAEA.804574?format=textfile"
+
+# Set destination
+file <- file.path(data_dir, "benchmark_data", "meybeck_raw.tsb")
+
+# Download and save the file
+download.file(url = url, destfile = file, mode = "wb")
+```
+
+# Clean the data
+
+```{r}
+meybeck <- read_delim(file = file, delim = "\t", skip = 97) %>% 
+  clean_names() %>% 
+  mutate(iso3 = countrycode(sourcevar = country, origin = "country.name", destination = "iso3c"))
+```
+
+# Visualize the data
+
+```{r}
+coast <- ne_coastline(returnclass = "sf")
+
+p1 <- ggplot() +
+  geom_sf(data = coast) +
+  geom_point(data = meybeck,
+             mapping = aes(x = longitude, y = latitude, size = n_no3_mg_l))
+p2 <- ggplot() +
+  geom_sf(data = coast) +
+  geom_point(data = meybeck,
+             mapping = aes(x = longitude, y = latitude, size = n_nh4_mg_l))
+
+p3 <- ggplot() +
+  geom_sf(data = coast) +
+  geom_point(data = meybeck,
+             mapping = aes(x = longitude, y = latitude, size = don_mg_l))
+
+p4 <- ggplot() +
+  geom_sf(data = coast) +
+  geom_point(data = meybeck,
+             mapping = aes(x = longitude, y = latitude, size = pon_µg_kg))
+
+plot_grid(p1, p2, p3, p4)
+
+```
+
+# Export the data
+
+```{r}
+write.csv(x = meybeck,
+          file = file.path(data_dir, "benchmark_data", "meybeck_clean.csv"),
+          row.names = F)
+```
+
+
+
+
+
+# Reproducibility
+
+## System info
+
+```{r systeminfo}
+Sys.info()
+```
+
+## Session info
+
+```{r sessioninfo}
+sessionInfo()
+```

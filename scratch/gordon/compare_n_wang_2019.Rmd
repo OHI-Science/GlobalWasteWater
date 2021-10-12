@@ -1,0 +1,119 @@
+---
+title: "comparison of the Xu Wang Numbers"
+author: "Gordon Blasco"
+date: "5/15/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(tidyverse)
+library(readxl)
+library(broom)
+```
+
+```{r}
+
+# get sheet names
+readxl::excel_sheets("/home/shares/ohi/git-annex/land-based/wastewater/data/raw/Xu_Wang_2019/Xu_Wang_2019_country_n_flow.csv.xlsx")
+
+# read in the wang data
+wang <- readxl::read_xlsx("/home/shares/ohi/git-annex/land-based/wastewater/data/raw/Xu_Wang_2019/Xu_Wang_2019_country_n_flow.csv.xlsx", sheet = "N flow")
+
+# read in our country level shape files
+our_data <- read_csv("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/countries_N_Alldata.csv") 
+```
+
+```{r}
+
+
+# fix country names
+tidy_wang <- wang %>% 
+  select(Country, `World continent`, `2015`) %>% 
+  rename(wang_n = `2015`, 
+         continent =`World continent`) %>% 
+  mutate(clean_name = case_when(
+    Country == "United States of America" ~ "United States",
+    Country == "United Republic of Tanzania" ~ "Tanzania",
+    Country == "Democratic Republic of the Congo" ~ "Congo - Kinshasa",
+    Country == "Congo" ~ "Congo - Brazzaville",
+    Country == "Côte d'Ivoire" ~ "Côte d’Ivoire",
+    Country == "Saint Kitts and Nevis" ~ "St. Kitts & Nevis",
+    Country == "Saint Lucia" ~ "St. Lucia",
+    Country == "Saint Vincent and the Grenadines" ~ "St. Vincent & Grenadines",
+    Country == "United Republic of Tanzania" ~ "Tanzania",
+    Country == "Trinidad and Tobago" ~ "Trinidad & Tobago",
+    Country == "Bolivia (Plurinational State of)" ~ "Bolivia",
+    Country == "Venezuela (Bolivarian Republic of)" ~ "Venezuela",
+    Country == "Democratic People's Republic of Korea" ~ "North Korea",
+    Country == "Republic of Korea" ~ "South Korea",
+    Country == "Iran (Islamic Republic of)" ~ "Iran",
+    Country == "Lao People's Democratic Republic" ~ "Laos",
+    Country == "Myanmar" ~ "Myanmar (Burma)",
+    Country == "Viet Nam" ~ "Vietnam",
+    Country == "Syrian Arab Republic" ~ "Syria",
+    Country == "Czech Republic" ~ "Czechia",
+    Country == "Republic of Moldova" ~ "Moldova",
+    Country == "Russian Federation" ~ "Russia",
+    Country == "Bosnia and Herzegovina" ~ "Bosnia & Herzegovina"
+  )) %>% 
+  mutate(clean_name = case_when(
+    !is.na(clean_name) ~ clean_name,
+    is.na(clean_name) ~ Country
+  )) %>% 
+  select(clean_name, continent, wang_n)
+
+# compare the data
+comparison <- our_data %>% 
+  filter(country.name.en %in% tidy_wang$clean_name) %>% 
+  group_by(country.name.en) %>% 
+  summarize(
+    our_n = sum(sum)
+  ) %>% 
+  rename(clean_name = country.name.en) %>% 
+  left_join(tidy_wang) %>% 
+  mutate(our_n_kg = our_n/1000)
+
+# plot it
+ggplot(comparison, aes(x = our_n_kg, wang_n))+
+  geom_point()+
+  coord_fixed()+
+  geom_abline()+
+  theme_classic()+
+  labs(
+    title = "Comparison of Wang et al's 2015 estimates to ours"
+  )+
+  theme(text =element_text(family = "serif"))
+
+
+# remove china and india (for now)
+regressed <- comparison %>% 
+  filter(clean_name != "China", 
+         clean_name != "India") 
+
+# run regression
+mod <- lm(our_n_kg ~ wang_n, data = regressed) #%>% 
+  glance()
+
+summary(model_1)
+
+ggplot(regressed, aes(y = our_n_kg, x = wang_n))+
+  geom_point(aes(color = continent))+
+  geom_smooth(method = "lm")+
+  coord_fixed()+
+  geom_abline()+
+  theme_classic()+
+  labs(
+    title = "Comparison of Wang et al's 2015 estimates to ours",
+    subtitle = "Excluding China and India"
+  )+
+  theme(text =element_text(family = "serif")) 
+
+
+
+```
+

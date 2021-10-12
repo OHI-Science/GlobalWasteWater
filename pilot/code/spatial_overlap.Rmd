@@ -1,0 +1,115 @@
+---
+title: "Population Spatial Overlap"
+author: "Jared Kibele"
+date: "3/13/2019"
+output: 
+  html_document: 
+    pandoc_args: ["--output=../docs/spatial_overlap.html"]
+---
+
+I need to figure out which country dataset is better for joining up with sanitation data and the population data. The contestants are `regions_2017_update` and `gadm`. I'm going to check the spatial overlap with population data here. Here's how I'm going to do it:
+
+1. Starting with the population raster, I'll make a raster with the value 2 in every pixel where population density is > 0 and the value 0 elsewhere.
+2. I'll make a raster from each of my vector layers (GADM and Regions) with 1s where there's a polygon and 0s where there's not.
+3. Then I'll add the pop based raster to each of the vector derived raster. Values of 3 will represent overlap, 1 will represent vector areas with no population, and 2s will represent population data without overlapping vector (in other words, population data that we can't link to sanitation data).
+
+```{r inspect_pop_raster}
+library(tidyverse)
+data_dir <- "/home/shares/ohi/git-annex/land-based/wastewater"
+pop_fn <- file.path(data_dir, "d2019/gpw-v4-population-density-adjusted-to-2015-unwpp-country-totals-rev10_2015_30_sec_tif/gpw_v4_population_density_adjusted_to_2015_unwpp_country_totals_rev10_2015_30_sec.tif")
+reg_fn <- file.path(data_dir, "regions_2017_update/regions_2017_update.shp")
+gadm_fn <-  file.path(data_dir, "gadm36_shp/gadm36.shp")
+
+# For later use in bash chunks
+Sys.setenv(POP_FN=pop_fn, REG_FN=reg_fn, GADM_FN=gadm_fn)
+
+# Check the resolution of the population raster
+cmd <- paste("gdalinfo", pop_fn, "| grep -E 'Pixel Size|Upper|Lower'")
+system(cmd)
+```
+
+```{r build_rasters, cache=TRUE}
+
+# Make file paths for our outputs
+pop2_fn <- file.path(data_dir, "pop2.tif")
+reg_exists_fn <- file.path(data_dir, "reg_exists.tif")
+gadm_exists_fn <- file.path(data_dir, "gadm_exists.tif")
+reg_calc_fn <- file.path(data_dir, "reg_overlap.tif")
+gadm_calc_fn <- file.path(data_dir, "gadm_overlap.tif")
+
+# Set env for later use in bash chunk
+Sys.setenv(POP_FN=pop_fn,
+           POP2_FN=pop2_fn, 
+           REG_EXISTS_FN=reg_exists_fn, 
+           GADM_EXISTS_FN=gadm_exists_fn,
+           REG_CALC_FN=reg_calc_fn,
+           GADM_CALC_FN=gadm_calc_fn)
+
+# GDAL commands are weird about overwriting, so delete files first
+# file.remove(pop2_fn)
+# 
+# pop2_cmd <- sprintf('gdal_calc.py -A %s --outfile=%s --type=Byte --calc="2*(A>0)"', pop_fn, pop2_fn)
+# system(pop2_cmd)
+
+```
+
+```{bash}
+gdal_calc.py --overwrite --NoDataValue=0 -A $POP_FN --outfile=pop2_temp.tif --type=Byte --calc="2*(A>0)"
+gdal_translate -a_nodata none -ot Byte pop2_temp.tif $POP2_FN
+rm pop2_temp.tif
+```
+
+
+Check the projection of the regions shapefile:
+
+```{bash}
+ogrinfo -al -so $REG_FN
+```
+ 
+ I want to keep everything in WGS84 (the projection of the population data) for now. So I'll use OGR to reproject. Then I'll rasterize the reprojected
+ 
+```{bash}
+ogr2ogr -overwrite -t_srs EPSG:4326 regions_4326.shp $REG_FN # destination before source, for some reason
+rm $REG_EXISTS_FN # Because rasterize doesn't have an overwrite option
+gdal_rasterize -init 0 -burn 1 -tr 0.008333333333334 0.008333333333334 \
+-te -180 -60 180 85 -ot Byte regions_4326.shp $REG_EXISTS_FN
+#rm regions_4326.shp
+```
+ 
+ Now do the band calc.
+ 
+```{bash}
+gdal_calc.py -A $REG_EXISTS_FN -B $POP2_FN --outfile=$REG_CALC_FN --type=Byte --calc="A+B"
+```
+```{bash}
+rm $GADM_EXISTS_FN
+gdal_rasterize -init 0 -burn 1 -tr 0.008333333333334 0.008333333333334 \
+-te -180 -60 180 85 -ot Byte $GADM_FN $GADM_EXISTS_FN
+```
+```{bash}
+gdal_calc.py -A $GADM_EXISTS_FN -B $POP2_FN --outfile=$GADM_CALC_FN --type=Byte --calc="A+B"
+```
+ 
+```{r}
+library(raster)
+library(leaflet)
+pnw_extent <- extent(-127, -120, 46.8, 51)
+gadm_calc <- raster(gadm_calc_fn)
+gadm_crop <- gadm_calc %>% crop(pnw_extent, snap='in')
+```
+
+```{r}
+color_labels <- c("No pop, no vector",
+                  "Vector, no pop",
+                  "Pop, no vector",
+                  "Overlap")
+leaflet() %>% 
+  addTiles() %>%
+  addRasterImage(gadm_crop %>% as.factor(), 
+                 colors=c("#86b1c8", "#0039d6", "#be0026", "#04b038")) %>% 
+  addLegend(colors=c("#86b1c8", "#0039d6", "#be0026", "#04b038"),
+            labels = color_labels)
+```
+
+
+

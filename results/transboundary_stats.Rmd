@@ -1,0 +1,111 @@
+---
+title: "Transboundary watersheds stats"
+output: html_document
+---
+
+```{r}
+library(sf)
+library(raster)
+library(here)
+library(tidyverse)
+library(fasterize)
+library(mapview)
+
+source("https://raw.githubusercontent.com/OHI-Science/ohiprep_v2019/gh-pages/workflow/R/common.R")
+ohi_rasters()
+
+```
+
+
+## rasterize the watersheds
+```{r setup, include=FALSE}
+#watersheds_all <- st_read("/home/shares/ohi/git-annex/globalprep/cw_nutrient_o_chem/int/watersheds/watersheds_all_4326.shp") ## read in watersheds file
+
+ws_coastal <- st_read("/home/shares/ohi/git-annex/land-based/wastewater/data/interim/watersheds_coastal.shp")
+st_crs(ws_coastal) <- "+proj=moll +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+
+sum(duplicated(ws_coastal$basin_id))
+
+ws_coastal_basin <- ws_coastal %>%
+  dplyr::select(basin_id) %>%
+  dplyr::mutate(basin_ID = row_number())
+summary(ws_coastal_basin)
+
+ws_coastal_basin$area <- st_area(ws_coastal_basin)
+
+ws_coastal_basin_df <- ws_coastal_basin %>%
+  st_set_geometry(NULL) 
+
+ws_coastal_basin_raster <- fasterize(ws_coastal_basin, ocean, field="basin_ID")
+plot(ws_coastal_basin_raster)
+basin_points <- rasterToPoints(ws_coastal_basin_raster, spatial=TRUE)
+  
+
+```
+
+## Get regions
+```{r}
+
+regions_id <- st_read("/home/shares/ohi/git-annex/land-based/wastewater/data/raw/gadm36_shp/gadm36.shp") %>%
+  dplyr::mutate(ID_0 = ifelse(is.na(ID_0), ID_1, ID_0)) %>%
+  # Assign number to Democratic Republic of Congo (currently NA)
+  dplyr::mutate(ID_0 = ifelse(NAME_0 == "Democratic Republic of the Congo", 301, ID_0))
+
+regions_id_df <- regions_id %>%
+  st_set_geometry(NULL) %>%
+  dplyr::select(region_ID = ID_0, iso3c=GID_0, region_name=NAME_0) %>%
+  unique()
+
+regions_mol <- st_transform(regions_id, crs = st_crs(ws_coastal_basin))
+
+regions_raster <- fasterize(regions_mol, ocean, field="ID_0")
+plot(regions_raster)
+```
+
+## extract data
+```{r}
+vals <- raster::extract(regions_raster, basin_points, df=TRUE, progress="text", sp=TRUE)
+names(vals) <- c("basin_ID", "region_ID")
+
+vals_df <- as.data.frame(vals) %>%
+  filter(!is.na(region_ID)) %>%
+  dplyr::select(basin_ID, region_ID) %>%
+  unique() %>%
+  left_join(ws_coastal_basin_df, by="basin_ID") %>%
+  left_join(regions_id_df, by = "region_ID")
+  
+
+vals_count <- vals_df %>%
+  group_by(basin_id) %>%
+  summarize(country_n = n()) %>%
+  left_join(ws_coastal_basin_df, by="basin_id") %>%
+  arrange(-area)
+
+ggplot(vals_count, aes(x=country_n)) +
+  geom_histogram()
+  
+table(vals_count$country_n)  #total=134,846
+sum(table(vals_count$country_n)) - 116095
+
+vals_high <- vals_count[1:100,]
+table(vals_high$country_n)
+
+vals_count[vals_count$country_n>8,]
+
+
+high_boundary <- ws_coastal %>%
+  filter(basin_id %in% c("sa_05339", "af_17918", "af_16862", "af_15969", "af_18922", "eu_30333", "eu_27295"))
+mapview(high_boundary)
+
+big_ws <- vals_count %>%
+  mutate(area_km2 = as.numeric(area/1000000)) %>%
+  dplyr::filter(area_km2 > 1000)
+table(big_ws$country_n)
+
+((sum(table(big_ws$country_n)))-3688)/(sum(table(big_ws$country_n)))
+
+sum(vals_count$area[vals_count$country_n>1])/
+sum(vals_count$area)
+
+```
+

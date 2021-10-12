@@ -1,0 +1,75 @@
+---
+title: "pourpoints table making "
+author: "Gordon Blasco"
+date: "4/7/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(leaflet)
+library(sf)
+library(here)
+library(mapview)
+
+source(here::here("code","file_names.R"))
+
+
+# Read in and prepare data
+
+
+pours     <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/pourpoints_N_Alldata.shp")
+pours_crs <- sf::read_sf(N_pourpoints_fn)
+
+# set the crs
+used_crs <- st_crs(pours_crs)
+st_crs(pours) <- used_crs
+```
+
+## create dataframe
+
+### USE SUM COLUMN
+```{r}
+
+
+total_pours <- pours %>% 
+  distinct(basin_id, .keep_all = TRUE) %>%
+  arrange(-sum) %>% 
+  mutate(total_rank = 1:nrow(.)) %>% 
+  mutate(norm_eff = sum/area) %>% 
+  arrange(-norm_eff) %>% 
+  mutate(norm_rank = 1:nrow(.)) %>% 
+  filter(norm_rank %in% 1:100 | total_rank %in% 1:100)%>% 
+  mutate(
+    perc_open = round((effluent_o/ sum)*100,1),
+    perc_septic = round((effluent_s/ sum)*100,1),
+    perc_treated = round((effluent_t/ sum)*100,1)
+  ) %>% 
+  mutate(
+    dominated = case_when(
+      perc_open > perc_septic & perc_open > perc_treated ~ "open",
+      perc_septic > perc_open & perc_septic > perc_treated ~ "septic" , 
+      perc_treated > perc_open & perc_treated > perc_septic ~ "treated"
+    )
+  ) %>% 
+  select(
+    basin_id, area, 
+    sum, norm_eff, effluent_o, effluent_s, effluent_t, 
+    perc_open, perc_septic, perc_treated, 
+    dominated, total_rank, norm_rank
+  )
+
+
+output_csv <- total_pours %>% 
+  st_drop_geometry()
+
+#write_csv(output_csv, "top_100_norm_and_total.csv")
+
+mapview(total_pours %>% filter(total_rank == 33))
+```
+

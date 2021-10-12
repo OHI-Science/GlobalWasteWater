@@ -1,0 +1,85 @@
+---
+title: "shiny_data_prep"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(here)
+library(tidyverse)
+library(sf)
+library(leaflet)
+library(raster)
+
+source(here::here("code","file_names.R"))
+
+```
+
+
+attempt to summarize at country level.... might not be doing this anymore. 
+```{r}
+
+# world_vector_sf <- st_read(world_vector_fn)
+# 
+# world_cast <- st_cast(world_vector_sf, "POLYGON")
+# 
+# 
+# 
+# eff_nitrogen <- raster(effluent_N_fn)
+# eff_fio <- raster(effluent_FIO_fn)
+# 
+# nitro_sum <- extract(eff_nitrogen, world_cast, fun=sum, df=TRUE) 
+# 
+# fio_sum <- extract(eff_fio, world_cast, fun=sum, df=TRUE) 
+
+```
+
+
+
+```{r}
+eff_nitrogen <- raster(effluent_N_fn)
+eff_fio <- raster(effluent_FIO_fn)
+
+```
+
+```{r}
+
+v <- values(eff_nitrogen)
+
+pal <- colorNumeric(c("#0C2C84", "#41B6C4", "#FFFFCC"), v,
+  na.color = "transparent")
+
+maxzoom = 8
+
+
+#/home/blasco/FIO_tiles
+
+"https://aurora.nceas.ucsb.edu/~jkibele/tiles/effluent_impact/{z}/{x}/{y}.png"
+
+
+fio_url <- "https://aurora.nceas.ucsb.edu/home/blasco/FIO_tiles/{z}/{x}/{y}.png"
+fio_url2    <- "https://aurora.nceas.ucsb.edu/~home/shares/ohi/git-annex/land-based/wastewater/data/interim/FIO_tiles/{z}/{x}/{y}.png"
+fio_url3 <- "https://aurora.nceas.ucsb.edu/home/~blasco/FIO_tiles/{z}/{x}/{y}.png"
+
+"https://mazu.nceas.ucsb.edu/wastewater/~FIO_tiles/{z}/{x}/{y}.png"
+
+new_url <- "/home/shares/ohi/git-annex/land-based/wastewater/data/interim/public_web/"
+
+"https://mazu.nceas.ucsb.edu/~jkibele/tiles/effluent_impact/{z}/{x}/{y}.png"
+
+
+#addResourcePath("mytiles", "/home/shares/ohi/git-annex/land-based/wastewater/data/interim/FIO_tiles")
+
+new <- "https://mazu.nceas.ucsb.edu/wastewater/FIO_tiles/{z}/{x}/{y}.png"
+
+
+leaflet() %>% 
+  addTiles(urlTemplate = new,
+           options = tileOptions(minZoom = 1, maxZoom = maxZoom,
+                                   opacity = 1.0, tms = TRUE))
+
+```
+

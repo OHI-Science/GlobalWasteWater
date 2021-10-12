@@ -1,0 +1,416 @@
+---
+title: "1_dhs_data_pull"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(rdhs)
+library(leaflet)
+library(sf)
+library(sp)
+#library(raster)
+#library(tmap)
+#library(spatstat)
+#library(maptools)
+# library(rgdal)
+#library(gstat)
+
+source(here("code", "file_names.R"))
+
+```
+
+# first attempt
+## Set credentials
+```{r}
+set_rdhs_config(email = "gordonblasco@gmail.com",
+                project = "Global Wastewater")
+
+```
+
+
+```{r}
+hv205_ref <- tribble(
+~hv205,      ~hv205_ref,                             ~input_type,
+  10,      "FLUSH TOILET",                              "NA",
+  11,      "Flush to piped sewer system",               "sewer",
+  12,      "Flush to septic tank",                      "septic",
+  13,      "Flush to pit latrine",                      "direct",
+  14,      "Flush to somewhere else",                   "NA",
+  15,      "Flush, dont know where",                    "NA",
+  20,      "PIT TOILET LATRINE",                        "direct",
+  21,      "Ventilated Improved Pit latrine (VIP)",     "direct",
+  22,      "Pit latrine with slab",                     "direct",
+  23,      "Pit latrine without slab/open pit",         "direct",
+  30,      "NO FACILITY",                               "direct",
+  31,      "No facility/bush/field",                    "direct",
+  41,      "Composting toilet",                         "direct",
+  42,      "Bucket toilet",                             "direct",
+  43,      "Hanging toilet/latrine",                    "direct",
+  96,      "Other",                                     "NA",
+  99,      "Missing",                                   "NA"
+  )  %>% 
+  mutate(input_score = case_when(
+    input_type == "sewer"  ~ 1,
+    input_type == "septic" ~ 2,
+    input_type == "direct" ~ 3,
+  ))
+```
+
+
+
+## Use DHS api to extract data
+```{r}
+indicators <- dhs_indicators()
+indicators[1,]
+
+tags <- dhs_tags()
+
+
+data <- dhs_data(tagIds = 70, # 70 is the tag for toilet facilities
+                 countryIds = c("PK"),
+                 breakdown ="background",
+                 surveyYearStart = 2010,
+                 returnGeometry = TRUE)
+
+sd
+sc <- dhs_survey_characteristics()
+```
+
+```{r}
+available <- get_available_datasets()
+
+geo_data <- available %>% 
+  filter(str_detect(FileName, "GE71FL.ZIP")) %>% 
+  dplyr::select(SurveyNum, SurveyId, DHS_CountryCode, FileName) %>% 
+  rename(geo_FileName = FileName)
+
+files <- available %>% 
+  filter(str_detect(FileName, "PR71FL.ZIP")) %>% 
+  left_join(geo_data) %>% 
+  filter(!is.na(geo_FileName))
+
+file_vector <- files %>% pull(FileName)
+
+downloads <- get_datasets(files$FileName)
+
+
+
+
+
+for (i in 1:length(file_vector)) {
+  
+  this_file <- file_vector[i]
+  
+  this_country_survey <- readRDS(downloads[[1]]) %>% 
+    dplyr::select(1:10, "hv025", "hv205")
+  
+  
+  pk_geo <- readRDS(downloads$PKGE71FL)
+  pk_geo_data <- pk_geo@data
+  pk_geo_prep <- pk_geo_data %>% 
+  dplyr::select(
+    "DHSCLUST",
+    "URBAN_RURA",
+    "LATNUM",
+    "LONGNUM"
+  ) %>% 
+  mutate(DHSCLUST = as.integer(DHSCLUST)) 
+  
+  pk_mapped <- pk %>%
+  rename(DHSCLUST = hv001) %>%
+  left_join(pk_geo_prep) %>%
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA")
+  
+  
+}
+
+```
+
+# Second attempt
+
+```{r}
+available <- get_available_datasets()
+
+countries_list <- available$DHS_CountryCode %>% 
+  unique()
+
+geo_data <- available %>% 
+  filter(str_detect(FileName, "GE71FL.ZIP")) %>% 
+  dplyr::select(SurveyNum, SurveyId, DHS_CountryCode, FileName) %>% 
+  rename(geo_FileName = FileName)
+
+files <- available %>% 
+  filter(str_detect(FileName, "PR71FL.ZIP")) %>% 
+  inner_join(geo_data) %>% 
+  filter(!is.na(geo_FileName))
+
+file_vector <- files %>% pull(FileName)
+
+downloads <- get_datasets(files$FileName)
+
+
+print(countries_list)
+
+```
+
+```{r}
+available <- get_available_datasets()
+
+countries_list <- available$DHS_CountryCode %>% 
+  unique()
+
+indicators <- dhs_indicators()
+indicators[1,]
+
+tags <- dhs_tags()
+
+# 70 is the tag for toilet facilities
+
+x <- countries_list[5]
+
+data <- dhs_data(tagIds          = 70,
+                 countryIds      = c(x
+                   # "AF", "AL", "AM", "AZ", "BD", "BO", "BR", "KH", "CO", "DR", "EC", "EG", "ES", "GU", "GY", "HT", "HN", "IA", "ID", "JO", "MV", "MX", "MB", "MA", "MM", "NP", "NC", "PK", "PY", "PE", "PH", "LK", "TH", "TL", "TT", "TN", "TR", "UA", "VN", "YE", "ZZ"
+                   ),
+                 breakdown       ="background",
+                 surveyYearStart = 2010,
+                 returnGeometry  = TRUE)
+
+
+sc <- dhs_survey_characteristics()
+```
+
+## for loop for all data sources:
+
+
+```{r}
+available <- get_available_datasets()
+
+countries <- available %>% distinct(DHS_CountryCode)
+
+for (i in 1:length(countries_list)) {
+  
+  this_country    <- countries_list[i]
+  
+  this_country_df <- paste0("data_", this_country)
+  
+  this_data   <- dhs_data(tagIds   = 70,
+                       countryIds      = c("PK"),
+                       breakdown       ="background",
+                       surveyYearStart = 2010,
+                       returnGeometry  = TRUE) 
+  
+  
+  assign(this_country_df, this_data)
+  
+}
+
+```
+
+```{r}
+
+available <- get_available_datasets()
+
+countries <- available %>% distinct(DHS_CountryCode)
+
+get_all_dhs_data <- function(country) {
+  
+  this_data   <- dhs_data(tagIds   = 70,
+                       countryIds      = c(country),
+                       breakdown       ="background",
+                       surveyYearStart = 2000:2015,
+                       returnGeometry  = TRUE)
+  
+  
+}
+
+
+get_all_dhs_surveys <- function(country) {
+  
+  this_data   <- dhs_data(tagIds   = 70,
+                       countryIds      = c(country),
+                       breakdown       ="background",
+                       surveyYear = 2000:2015,
+                       returnGeometry  = TRUE)# %>% 
+  #  dplyr::distinct(SurveyId) %>% 
+    #pull(SurveyId)
+  
+  
+}
+
+
+possibly_get_dhs         = possibly(get_all_dhs_data, otherwise = "something wrong here")
+possibly_get_dhs_surveys = possibly(get_all_dhs_surveys, otherwise = "something wrong here")
+
+
+countries_data <- countries %>% 
+  mutate(data = map(DHS_CountryCode, possibly_get_dhs_surveys))
+
+```
+
+#extract the list of surveyID's that meet our critera
+```{r}
+
+countries_data_new <- countries_data %>% 
+  filter(!data == "something wrong here") %>% 
+  separate_rows(data) %>% 
+  filter(data != "c" & data != "")# %>% 
+ #distinct(DHS_CountryCode, .keep_all = TRUE)
+  
+have_geo_data <- available %>% 
+  filter(FileType == "Geographic Data") #%>% 
+  pull(SurveyId)
+
+datasets <- dhs_datasets(surveyIds = countries_data_new$data, 
+                         fileFormat = "flat")
+
+
+downloads <- get_datasets(datasets$FileName)
+
+```
+
+
+```{r}
+hv205_ref <- tribble(
+~hv205,      ~hv205_ref,                             ~input_type,
+  10,      "FLUSH TOILET",                              "NA",
+  11,      "Flush to piped sewer system",               "sewer",
+  12,      "Flush to septic tank",                      "septic",
+  13,      "Flush to pit latrine",                      "direct",
+  14,      "Flush to somewhere else",                   "NA",
+  15,      "Flush, dont know where",                    "NA",
+  20,      "PIT TOILET LATRINE",                        "direct",
+  21,      "Ventilated Improved Pit latrine (VIP)",     "direct",
+  22,      "Pit latrine with slab",                     "direct",
+  23,      "Pit latrine without slab/open pit",         "direct",
+  30,      "NO FACILITY",                               "direct",
+  31,      "No facility/bush/field",                    "direct",
+  41,      "Composting toilet",                         "direct",
+  42,      "Bucket toilet",                             "direct",
+  43,      "Hanging toilet/latrine",                    "direct",
+  96,      "Other",                                     "NA",
+  99,      "Missing",                                   "NA"
+  )  %>% 
+  mutate(input_score = case_when(
+    input_type == "sewer"  ~ 0.01,
+    input_type == "septic" ~ 0.316,
+    input_type == "direct" ~ 0.3
+  ))
+
+intermediate_dir <- "/home/shares/ohi/git-annex/land-based/wastewater/data/interim"
+sanit_factors_fn <- file.path(intermediate_dir, "country_sanitation_factors.csv") # country level sanitation factors for urban and rural
+sanfac <- read_csv(sanit_factors_fn)
+
+
+```
+
+
+
+```{r}
+
+have_geo_data <- available %>% 
+  filter(FileType == "Geographic Data") #%>% 
+  #distinct(DHS_CountryCode) %>% 
+  #pull(DHS_CountryCode)
+
+countries_data_new <- countries_data_new %>% 
+  filter(data %in% have_geo_data)
+
+
+for (i in 1:nrow(countries_data_new)) {
+  
+  country <- countries_data_new$DHS_CountryCode[i]
+  
+  survey_id <- countries_data_new$data[i]
+  
+  country_name <- datasets %>% 
+    filter(DHS_CountryCode == country) %>% 
+    distinct(CountryName) %>% 
+    pull(CountryName)
+  
+  file_name <- datasets %>% 
+    filter(FileType == "Household Member Recode" & SurveyId == survey_id) %>% 
+    pull(FileName) %>% get_datasets()
+  
+  geo_name <- datasets %>% 
+    filter(FileType == "Geographic Data" & SurveyId == survey_id) %>% 
+    pull(FileName) %>% get_datasets()
+  
+  household_data <- readRDS(file_name[[1]]) %>% 
+    dplyr::select(1:10, "hv025", "hv205") 
+  
+  geo_data <- readRDS(geo_name[[1]])@data# %>% 
+    dplyr::select(
+      "DHSCLUST",
+      "URBAN_RURA",
+      "LATNUM",
+      "LONGNUM"
+    ) %>% 
+    mutate(DHSCLUST = as.integer(DHSCLUST)) 
+  
+  our_sanits <- sanfac %>% 
+    filter(country == country_name) %>% 
+    dplyr::select(15:23) %>% 
+    pivot_longer(everything(), names_to = "name", values_to = "value") %>% 
+    mutate(URBAN_RURA = case_when(
+      str_detect(name, "^rural") ~ "R",
+      str_detect(name, "^urban") ~ "U",
+      str_detect(name, "^national") ~ "Nat"
+    ),
+      sf_type = str_extract(name, "....$")
+    ) %>% 
+    dplyr::select(-name) %>% 
+    pivot_wider(id_cols = -sf_type, names_from = sf_type)
+  
+  
+  
+  national_level <- household_data %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(geo_data) %>% 
+  summarise(sanfac_from_DHS = mean(input_score)) %>% 
+  mutate(URBAN_RURA = "Nat")
+
+
+urb_rural_level <- household_data %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(geo_data) %>% 
+  group_by(URBAN_RURA) %>% 
+  summarise(sanfac_from_DHS = mean(input_score)) %>% 
+  bind_rows(national_level) %>% 
+  left_join(our_sanits) %>% 
+  pivot_longer(-URBAN_RURA, names_to = "source", values_to = "sanitation_factor") %>% 
+  mutate(country = country_name)
+  
+  
+assign(paste0("final_df_", country_name), urb_rural_level)
+
+}
+
+
+ggplot(urb_rural_level, aes(x = source, y = sanitation_factor)) +
+  geom_col() +
+  facet_wrap(~URBAN_RURA)
+
+
+```
+
+
+

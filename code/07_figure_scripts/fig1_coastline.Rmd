@@ -1,0 +1,343 @@
+---
+title: "Figure_1_final"
+author: "Gordon Blasco"
+date: "7/15/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## load libraries and data
+
+FINAL FIGURE 1 SCRIPT
+```{r}
+library(raster)
+library(tidyverse)
+library(here)
+library(rgdal)
+library(ggpubr)
+library(sf)
+library(sp)
+library(rasterVis)
+library(viridis)
+
+
+source(here("code", "file_names.R"))
+
+
+# load in N raster and world vector
+#vec_world <- st_read(world_vector_fn) %>% 
+#  filter(poly_type == "GADM") 
+
+r <- raster(effluent_N_log10_fn)
+
+# fix crs of world vector
+moll <- crs(r)
+#st_crs(vec_world) = moll
+
+
+N_sheds <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/effluent_N_watersheds_all.shp") %>% 
+  mutate(area = st_area(.)) %>% 
+  dplyr::select(basin_id, area, tot_N) %>% 
+  rename(tot_N_sheds = tot_N) %>% 
+  st_set_geometry(NULL)
+
+n_points <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/effluent_N_pourpoints_all.shp") %>% 
+  left_join(N_sheds)
+
+st_crs(n_points) = moll
+
+
+# make the top 25 normalized and total pourpoints
+n_top_norm <- n_points %>% 
+  mutate(norm_N = tot_N/area) %>% 
+  arrange(-norm_N) %>% 
+  mutate(type = "normalized") %>% 
+  head(25)
+
+n_top <- n_points %>% 
+  arrange(-tot_N) %>% 
+  head(25) %>% 
+  mutate(type = "top")# %>% # remove the top normalized points.
+  #bind_rows(n_top_norm)
+
+
+
+
+library(rnaturalearth)
+library(rgeos)
+countries_test <- ne_countries(returnclass = "sf")
+co_trans <- st_transform(countries_test, moll)
+```
+
+
+## Make the distance matrix
+```{r}
+
+
+
+split_test <- st_read("/home/shares/ohi/git-annex/land-based/wastewater/data/interim/coastline_seven_split/coastline_seven_split.shp")
+coast_trans <- st_transform(split_test,moll) %>% 
+  mutate(no = 1:nrow(.))
+
+
+plot(coast_trans, max.plot = 1)
+## run the distance matrix
+#distance_matrix <- st_distance(n_points, coast_trans)
+
+## save it so you never have to run it again. I made this mistake. 
+#saveRDS(distance_matrix, "saved_coast_distance_matrix_seven.rds")
+
+
+
+
+```
+
+## Use the distance matrix to visualize the effected coastlines
+```{r}
+## make threshold for close points outside of polygon (you can remove this)
+thres <- units::as_units(10000, "meters") # make threshold in meteres
+
+## read in the matrix
+dm <- readRDS("saved_coast_distance_matrix_seven.rds")
+
+dm_top <- dm[1:67423,]      #67423
+dm_bot <- dm[67423:134846,] #67424
+
+x <- as.data.frame(dm_top)%>%
+  mutate(point_id = 1:nrow(.)) %>% # name to match the id column of the points
+  pivot_longer(-point_id) %>%
+  group_by(point_id) %>%
+  filter(value == min(value)) %>% # chooses points inside the polygon
+  rename(coast_line_id = name) %>%
+  ungroup() %>%
+  distinct(point_id, .keep_all = TRUE)
+
+y <- as.data.frame(dm_bot)%>%
+  mutate(point_id = 67423:134846) %>% # name to match the id column of the points
+  pivot_longer(-point_id) %>%
+  group_by(point_id) %>%
+  filter(value == min(value)) %>% # chooses points inside the polygon
+  rename(coast_line_id = name) %>%
+  ungroup() %>%
+  distinct(point_id, .keep_all = TRUE)
+
+
+z <- as.data.frame(dm)%>%
+  mutate(point_id = 1:nrow(.)) %>% # name to match the id column of the points
+  pivot_longer(-point_id) %>%
+  group_by(point_id) %>%
+  filter(value == min(value)) %>% # chooses points inside the polygon
+  rename(coast_line_id = name) %>%
+  ungroup() %>%
+  distinct(point_id, .keep_all = TRUE)
+
+
+n_info <- n_points %>%
+  dplyr::select(basin_id, tot_N) %>%
+  mutate(point_id = 1:nrow(.)) %>%
+  st_set_geometry(NULL)
+
+
+final <- z %>%
+  mutate(no=as.integer(str_extract(coast_line_id, "[0-9]+"))) %>%
+  filter(value <= thres) %>%
+  left_join(n_info) %>%
+  group_by(no) %>%
+  summarise(tot_N = sum(tot_N, na.rm = TRUE))
+
+# rm(dm,
+#    dm_top, 
+#    dm_bot, 
+#    x, 
+#    y,
+#    n_info)
+
+
+coast_values <- coast_trans %>%
+  left_join(final) %>%
+  filter(!is.na(tot_N))
+
+#saveRDS(coast_values, "coast_values_saved.RDS")
+coast_values <- readRDS("coast_values_saved.RDS")
+
+ggplot()+
+  geom_sf(data=coast_values,
+          aes(fill = log10(tot_N+1),
+              color = log10(tot_N+1)),
+          size = 1)+
+  scale_fill_viridis(limits = c(0, 12),
+                     breaks = c(0, 3, 6, 9, 12))+
+  scale_color_viridis()
+
+```
+
+## Visualize the source raster with the coastlines
+```{r}
+max_lim = log10(max(coast_values$tot_N)+1)
+mid_point = max_lim/2
+
+library(glue)
+# coastal
+low_col = "gold"
+mid_col = "deeppink1"
+high_col = "blue4"
+
+# terrestrial
+low_fill = "green2"
+mid_fill = "turquoise4"
+high_fill = "blue4"
+
+
+# plot source raster
+# 8 for plot resolution
+pl_a <- gplot(r, maxpixels = 1e8) + 
+  geom_tile(aes(fill = value,
+                alpha = value), na.rm = TRUE)+
+  #scale_fill_gradient(low ='yellow', high ='darkred', na.value = 'white') +
+  #scale_fill_continuous()+
+  scale_y_continuous(expand = c(0,0))+
+  scale_x_continuous(expand = c(0,0))+
+  #scale_alpha_continuous(range = c(0,1))+
+  coord_equal() +
+ labs(
+ #   title = "",#"A) Total Nitrogen Effluent (Natural Log Grams)",
+    x = "",
+    y = ""
+   ) + 
+   #theme(
+   #text = element_text(family = 'serif')#,
+   #plot.title.position = "plot"
+   #)+
+  geom_sf(data = co_trans %>% filter(iso_a3 != "ATA"),
+          color = "black",
+          fill = "tan", 
+          size = 0.1,
+          alpha = .05,
+          inherit.aes = FALSE)+
+ guides(alpha = FALSE)
+
+# add coastline
+p2_a <- pl_a +
+  geom_sf(data=coast_values,
+          aes(fill = log10(tot_N+1),
+              color = log10(tot_N+1)),
+         # alpha = .7,
+          size = .7,
+          inherit.aes = FALSE)+
+  #scale_fill_viridis(na.value = 'white'#,
+                     #limits=c(0, max_lim)
+  #                   )+
+  scale_fill_gradient2(low = low_fill, 
+                       mid = mid_fill, 
+                       high = high_fill, 
+                       midpoint = mid_point, 
+                       na.value = "white", 
+                       #limits=c(0, max_lim),
+                       limits = c(0, 12),
+                       breaks = c(0, 3, 6, 9, 12))+
+   scale_color_gradient2(low = low_col, 
+                         mid = mid_col, 
+                         high = high_col, 
+                         midpoint = mid_point,
+                         limits = c(0, 12),
+                         breaks = c(0, 3, 6, 9, 12))+
+ #scale_color_viridis(limits=c(0, max_lim),
+ #                     direction = -1,
+ #                     option = "plasma")+
+  labs(fill = "Log₁₀(gN) \n Terrestrial",
+       color = "Log₁₀(gN) \n Coastal")+
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank()) 
+ # guides(fill = FALSE)
+
+p2_a
+
+#source("fig1_zoom_panels.R")
+
+parts<- p3+p4+p5+
+  plot_layout(guides = 'collect')&
+  theme(legend.position = "none")&
+scale_fill_gradient2(low = low_col, mid = mid_col, high = high_col, midpoint = mid_point, na.value = "white", limits=c(0, max_lim))
+  #scale_fill_viridis(limits=c(0, max_lim),
+  #                   na.value = 'white',
+  #                   direction = -1,
+  #                    option = "plasma")
+parts
+
+
+
+layout <- c(
+  patchwork::area(t = 1, l = 1, b = 7, r = 10),
+  patchwork::area(t = 6, l = 1, b = 9, r = 10)
+)
+
+plot(layout)
+
+fig_1_final <- p2_a/parts + 
+  plot_layout(design = layout)+
+  plot_layout(guides = 'collect')+ 
+  plot_annotation(tag_levels = 'A')
+
+
+ggsave(plot = fig_1_final, 
+       device = "tiff",
+       filename = "scratch/gordon/final_figures/figure_1_high_def_final.tiff",
+       dpi = 350,
+       units = "cm",
+       width = 22,
+       height = 20)
+
+```
+
+
+```{r}
+figure_a <- p2_a +
+  #geom_sf(data = n_top, 
+  #        color = "black",
+  #        size = 2.5,
+  #        inherit.aes = FALSE)+
+  geom_sf(data = n_top, 
+          fill =c(rep("#ff6363", 25)),
+          fill = c(rep("black", 25)),
+          size = 2,
+          shape = 21,
+          inherit.aes = FALSE)+
+  theme(
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank(),
+      axis.text = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title.y = element_blank(),
+    legend.title = element_blank(),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal"
+  )
+
+figure_a
+
+```
+
+
+adding zoom ins
+```{r}
+plume_raster <- raster(N_plume_log10)
+
+```
+
+
+
+
+```{r}
+gplot(r, maxpixels = 1e4) + 
+  geom_tile(aes(fill = value,
+                alpha = value), na.rm = TRUE)+
+  scale_y_continuous(expand = c(0,0))+
+  scale_x_continuous(expand = c(0,0))+
+  scale_alpha_continuous(range = c(0,1))+
+  coord_equal() 
+```
+

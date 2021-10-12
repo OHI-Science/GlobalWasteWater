@@ -1,0 +1,106 @@
+---
+title: "Data Sets"
+author: "Jared Kibele, updated by Cascade Tuholske on 2019.10.09"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: TRUE 
+    toc_float: TRUE
+    pandoc_args: ["--output=../docs/datasets.html"]
+---
+
+The datasets used in this project fit into three categories: input data, intermediate data, and output. Paths to all datasets will be set in `code/file_names.R`, and this file will be sourced in individual Rmarkdown files to set the file paths.
+
+## Input Data
+
+These data sets originated externally to this project. A couple were from previous NCEAS projects, but most were from elsewhere.
+
+#### Sanitation Data
+
+Sanitation data comes from the UNICEF-WHO Joint Monitoring Project. It has national-level break downs the % of use of different sanitation types by both urban and rural populations. We aggregate these catagories to: open/untreated, septic, and sewer. More information can be found [here](https://washdata.org/monitoring/sanitation).
+
+#### GADM
+
+Country-level boundaries are from [GADM](https://en.wikipedia.org/wiki/GADM) which are disolved and joined to EEZ. The GADM database is widely used by researachers around the world. While limited, more information can be found [here](https://en.wikipedia.org/wiki/GADM)
+
+#### Population Density
+
+Population Density comes from the [Global Human Settlement Layer Population](https://ghsl.jrc.ec.europa.eu/ghs_pop2019.php) product produced by the European Union's Joint Research Counsil. It is a modeled population estimate at 1-km grid cell spatial resolution combines the [GPWv4](https://sedac.ciesin.columbia.edu/data/collection/gpw-v4) with [built](https://ghsl.jrc.ec.europa.eu/ghs_bu2019.php) envrionment estimates  derived from Landsat imagery (also produced by the JRC). We are using the 2015 estimates. More information can be found [here](https://ghsl.jrc.ec.europa.eu/documents/GHSL_Data_Package_2019.pdf?t=1478q532234372). 
+
+#### Urban / Rural Input Data
+Urban and rural areal extent comes fomr the [Global Human Settlement Layer SMOD] product produced by the European Union's Joint Research Counsil. This dataset offers classified maps of different catagories of human presence on the planet at 1-km grid cell spatial resolution. We aggregate the JCR catagories into bianary [urban/rural](https://github.com/OHI-Science/wastewater/blob/master/code/urban_rural.py) catagories. More information can be found [here](https://ghsl.jrc.ec.europa.eu/documents/GHSL_Data_Package_2019.pdf?t=1478q532234372).
+
+#### Calorie/Protein Data for N
+Describe
+
+#### Detergent Data for P
+Describe
+
+#### River Network Data
+River networks were pulled from https://www.hydrosheds.org/, which is a global line file of 
+river networks networks at 15 & 30 seconds resolution. This file will be combined with 
+[this](https://apps.gis.ucla.edu/geodata/dataset/world_regions) world regions file from ESRI. 
+The goal is to build this into a bianary raster w/ cells that are within 1 km of a river or coast masked.
+
+#### World EEZs
+Exclusive Economic Zone boundaries were modified from Claus et al. 2012 for the original Ocean Health Index. We aggregated some EEZ regions to the level of country (e.g., Hawaii is estimated as part of the larger U.S.). We have also modified some boundaries (Halpern et al. 2012, 2015b).
+
+Claus, S., De Hauwere, N., Vanhoorne, B., Souza Dias, F., Oset Garcia, P., Hernandez, F. & Mees, J. (2012). Marine regions: Exclusive economic zones (v7). URL http://www.marineregions.org/
+
+Halpern, et al. (2012). An index to assess the health and benefits of the global ocean. Nature.
+
+Halpern, et al. (2015b). Patterns and emerging trends in global ocean health. PLoS ONE, 10, e0117863
+
+
+#### Watersheds
+The watershed and pourpoint data was created for a cumulative impacts project. The description of how these data were created is in the original 2008 publication (A Global Map of Human Impact on Marine Ecosystems):
+http://science.sciencemag.org/highwire/filestream/589368/field_highwire_adjunct_files/0/Halpern_SOM.pdf (skip to the section: Data Layers --> Land-based drivers).
+
+Originally, these data were used to estimate these forms of pollution that flow into the ocean from landbased sources:
+
+nutrient pollution from agricultural fertilizer inorganic chemical pollution from run-off of impervious surfaces
+organic chemical pollution from agricultural pesticides/herbicides. For example, for the agricultural methods, country level fertilizer data was spatially dispersed across the landscape according to land use data. These values were then summed for each watershed, and assumed to get to the pourpoint. At the pourpoint location, a model was used to estimate dispersion into the ocean.
+
+## Intermediate Data
+
+Some of these files were written out just to break up the processing tasks, while others may be useful in their own right. 
+
+#### Ocean Mask
+
+This will simply be a raster with 1s indicating ocean, and 0s indicating land. It will be derived from the GADM and it'll be in `ocean_mask.Rmd`.
+
+#### World Vector Files
+```gadm_dissolve_fn``` -- disolved GADM boundaires
+```world_vector_fn``` -- gadm_dissolve_fn attached to EEZs
+
+#### Sanitation Factors
+```san_dat_clean_fn``` - Clean JRC file
+```sanit_factors_fn``` - Country-level sanitation factors
+```sf_raster_rural_urban_fn``` - Urban / Rural sanitation factors 
+
+#### Calories, N, & P Estimates 
+```calories_fn``` - National-level 2013 caloric intake
+```kcal_cap_year_raster_fn``` - Rasterized caloric intake
+
+#### Effluent Density, Pixel-level
+```effluent_fn``` current output uses *Pop * SF * Cal*  2019.10.09 CPT, need to update to only be SF * Pop
+effluent_N_fn <- future N output file
+effluent_P_fn <- future N output file
+
+#### Watersheds 
+```effluent_watersheds_fn``` - Watershed boundaries for zonal stats, not sure of source (CPT)
+
+#### Pour Points
+
+The original set of pour point locations was taken from a previous analysis on Mazu here: 
+```/home/shares/ohi/marine_threats/impact_layers_2013_redo/impact_layers/work/land_based/scripts_and_intermediary_layers/[6]_plume_prepare/output/og_blank``` 
+They were copied to `/home/shares/ohi/git-annex/land-based/wastewater/pour_points/global_plume_2007_2010.*`. They'll be processed in the `pour_points.Rmd` notebook.
+
+I don't know much about how these points were generated. ...persumably from the same elevation data used to create the watersheds... I'll need to look into that at some point.
+
+## Output
+
+This'll pretty much just be the raster file, and maybe a static map version as well as a leaflet slippy map version. All in a glorious yellow to brown color palatte.
+
+## Output Files
+hotspots_fn <- file.path(output_dir, "wastewater_hotspot.shp")

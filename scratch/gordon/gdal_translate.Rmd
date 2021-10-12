@@ -1,0 +1,42 @@
+---
+title: "tilize_markdown"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(here)
+library(raster)
+library(gdalUtils)
+library(mapview)
+```
+
+```{r}
+source(here("code", "file_names.R"))
+```
+
+
+clean up the plume raster
+```{r}
+
+r <- raster("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/FIO_effluent_output/plume_rasters/final_rasters/FIO_plume_final.tif")
+
+
+mapview::mapview(raw_plume_raster, maxpixels =  733796895)
+
+```
+
+```{r}
+raw_plume_raster
+x <- RGB(raw_plume_raster)
+
+
+gdal_translate(raw_plume_raster, "translated_raster.tif", ot = "Byte", expand = "rgb")
+
+
+```
+

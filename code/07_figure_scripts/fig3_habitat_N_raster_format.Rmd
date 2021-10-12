@@ -1,0 +1,94 @@
+---
+title: ""
+output: html_document
+---
+
+```{r}
+install.packages("rgdal")
+
+library(rgdal)
+library(raster)
+library(sf)
+
+library(dplyr)
+library(stringr)
+
+library(here)
+
+source("https://raw.githubusercontent.com/OHI-Science/ohiprep_v2019/gh-pages/workflow/R/common.R")
+ohi_rasters()
+region_data()
+
+```
+
+
+Prepare and clean rasters
+```{r}
+
+total <- raster("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/global_effluent_2015_tot_N.tif")
+treated <- raster("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/global_effluent_2015_treated_N.tif")
+open <- raster("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/global_effluent_2015_open_N.tif")
+septic <- raster("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/global_effluent_2015_septic_N.tif")
+
+cellStats(total, stat="min") # min value = -617.752  (not sure where negative values would come from, check on this)
+cellStats(total, stat="max") # max value =  1,812,330,880
+cellStats(total, stat="sum", na.rm=TRUE) # 5.007747e+12
+
+cellStats(treated, stat="min") # min value = -535.3172
+cellStats(treated, stat="max") # max value =   677,128,960
+cellStats(treated, stat="sum") # max value =   3.137106e+12
+
+cellStats(open, stat="min") # min value = -2.065771
+cellStats(open, stat="max") # max value =   965,061,184
+cellStats(open, stat="sum") # max value =   1.608168e+12
+
+cellStats(septic, stat="min") # min value = -1.47829
+cellStats(septic, stat="max") # max value =   170,141,344
+cellStats(septic, stat="sum") # max value =   0.26e12
+
+neg_to_zero <- function(raster_name){
+  
+#negative cell values convert to zero for now
+raster::calc(get(raster_name), fun=function(x){ifelse(x<0, 0, x)},
+             filename= sprintf("/home/shares/ohi/git-annex/land-based/wastewater/habitat/cleaned_N/global_effluent_2015_%s_N_raw_nonegs.tif", raster_name), overwrite=TRUE)
+}
+
+neg_to_zero(raster_name="total")
+neg_to_zero(raster_name="treated")
+neg_to_zero(raster_name="open")
+neg_to_zero(raster_name="septic")
+
+
+start_raster <- raster(sprintf("/home/shares/ohi/git-annex/land-based/wastewater/habitat/cleaned_N/global_effluent_2015_%s_N_raw_nonegs.tif", check_name))
+
+
+further_manip <- function(raster_no_negs_name){
+
+  #raster_no_negs_name = "total"
+    raster_no_negs <- raster(sprintf("/home/shares/ohi/git-annex/land-based/wastewater/habitat/cleaned_N/global_effluent_2015_%s_N_raw_nonegs.tif", raster_no_negs_name))
+
+  # project to mollweide
+raster::projectRaster(raster_no_negs, ocean, over=TRUE, method = "ngb", filename = sprintf("/home/shares/ohi/git-annex/land-based/wastewater/habitat/cleaned_N/global_effluent_2015_%s_N_mol_nonegs.tif", raster_no_negs_name), progress="text", overwrite=TRUE)
+
+
+ww_mol <- raster::raster( sprintf("/home/shares/ohi/git-annex/land-based/wastewater/habitat/cleaned_N/global_effluent_2015_%s_N_mol_nonegs.tif", raster_no_negs_name))
+
+# raster doesn't have complete coverage...fixing this and masking ocean region
+ww_mol %>%
+raster::extend(ocean) %>%
+    raster::calc(fun=function(x){ifelse(is.na(x), 0, x)}) %>%  # gapfilling area near Antarctica with zero
+    raster::mask(ocean, 
+         sprintf("/home/shares/ohi/git-annex/land-based/wastewater/habitat/cleaned_N/global_effluent_2015_%s_N_mol_nonegs_mask.tif", raster_no_negs_name),
+         overwrite = TRUE, progress = "text")
+
+#check <- raster(sprintf("/home/shares/ohi/git-annex/land-based/wastewater/habitat/cleaned_N/global_effluent_2015_%s_N_mol_nonegs_mask.tif", raster_no_negs_name))
+#plot(check)
+}
+
+further_manip(raster_no_negs_name="total")
+further_manip(raster_no_negs_name="treated")
+further_manip(raster_no_negs_name="open")
+further_manip(raster_no_negs_name="septic")
+
+```
+

@@ -1,0 +1,19 @@
+---
+title: "Ocean Mask"
+author: "Jared Kibele"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    pandoc_args: ["--output=../docs/ocean_mask.html"]
+---
+
+```{r setup}
+source('./file_names.R')
+```
+
+
+```{bash rasterize_ocean_mask}
+rm $OCEAN_MASK_FN
+gdal_rasterize -ot Byte -init 0 -burn 1 -tr 0.008333333333334 0.008333333333334 \
+-te -180 -60 180 85 $GADM_FN $OCEAN_MASK_FN 
+```

@@ -1,0 +1,549 @@
+---
+title: "figures for OK April"
+author: "Gordon Blasco"
+date: "4/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(sf)
+library(tidyverse)
+library(mapview)
+library(mapedit)
+library(countrycode)
+library(ggpubr)
+library(patchwork)
+```
+
+```{r}
+pours       <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/pourpoints_N_Alldata.shp")
+crs_example <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/effluent_N_pourpoints.shp")
+
+
+p_names <- read_csv("scratch/gordon/top_25_names.csv")
+
+N_norm_pours_40 <- pours %>% 
+  mutate(norm_eff = effluent_a/area) %>% 
+  arrange(-norm_eff) %>% 
+  head(25) %>% 
+  mutate(rank = 1:nrow(.)) %>% 
+  left_join(p_names)
+
+N_pours_40 <- pours %>% 
+  arrange(-effluent_a) %>% 
+  head(25) %>% 
+  mutate(rank = 1:nrow(.))
+
+# adding in the crs from another shape file
+crs <- st_crs(crs_example)
+
+# fixing the crs
+st_crs(N_norm_pours_40) <- crs
+st_crs(N_pours_40)      <- crs
+
+table <- N_pours_40 %>% 
+  select(basin_id, name, country, area, effluent_a, norm_eff) %>% 
+  rename(total_g_nitrogen = effluent_a, 
+         normalized_n = norm_eff)%>% 
+  st_set_geometry(NULL) 
+
+#write_csv(table, "top_25_norm.csv")
+
+mapview(N_norm_pours_40)
+
+
+
+```
+
+
+# plot top 40 normalized pour points
+```{r}
+
+library(tmap)
+data("World")
+
+tm_shape(World)+
+  tm_polygons()+
+  tm_shape(N_norm_pours_40) +
+    tm_symbols(col = "red", size = "norm_eff", scale = 1)+
+  tm_legend(show = FALSE)
+
+
+ggplot(World)+
+  geom_sf(colour = "black")+
+  geom_sf(aes(size=total), 
+          fill = "black",
+          color = "red",
+          data = N_norm_pours_40)+
+  theme_classic()+
+  labs(
+    title = "Top 25 Pourpoints Normalized by Area (grams N/area)",
+    x = "",
+    y = ""
+   ) + 
+   theme(
+   text = element_text(family = 'serif'),
+   plot.title.position = "plot",
+   legend.position = "none"
+   )
+  
+```
+
+
+```{r}
+
+library(tmap)
+data("World")
+
+
+N_total_40 <- pours %>% 
+  arrange(-effluent_a) %>% 
+  head(25) %>% 
+  mutate(rank = 1:nrow(.)) 
+
+
+st_crs(N_total_40)      <- crs
+
+
+ggplot(World)+
+  geom_sf(colour = "black")+
+  geom_sf(aes(size=effluent_a), 
+          fill = "black",
+          color = "red",
+          data = N_total_40)+
+  theme_classic()+
+  labs(
+    title = "Top 25 Total Nitrogen Effluent Pourpoints",
+    x = "",
+    y = ""
+   ) + 
+   theme(
+   text = element_text(family = 'serif'),
+   plot.title.position = "plot",
+   legend.position = "none"
+   )
+```
+
+
+
+
+
+```{r}
+N_norm_pours_scatter <- pours %>% 
+  mutate(norm_eff = effluent_a/area) %>% 
+  arrange(-norm_eff) %>% 
+  #head(40) %>% 
+  mutate(rank = 1:nrow(.)) 
+
+
+ggplot(N_norm_pours_scatter, aes((x = norm_eff), y =(effluent_a)))+
+  geom_point()+
+  geom_abline()+
+labs(
+  title = "Pourpoints, 1:1 total to normalized effluent",
+  x = "Normalized Effluent",
+  y = "Total Effluent"
+ ) + 
+  theme_classic()+
+ theme(
+ text = element_text(family = 'serif', size = 12),
+ plot.title.position = "plot"
+ )+
+  scale_y_continuous(#limits = c(0,27),
+                     expand = c(0,0))+
+  scale_x_continuous(#limits = c(0,27), 
+                     expand = c(0,0))
+
+
+```
+
+
+
+
+
+# Nations barchart
+```{r}
+nations <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/countries_N_Alldata.shp")
+
+country_name_df <- countrycode::codelist %>% 
+  select(country.name.en, iso3c) %>% 
+  rename(ISO3 = iso3c, 
+         country_name = country.name.en)
+
+nations_treat <- nations %>% 
+  select(ISO3, effluent_o, effluent_s, effluent_t, effluent_a) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(ISO3) %>% 
+  summarize(
+    effluent_o = sum(effluent_o), 
+    effluent_s = sum(effluent_s), 
+    effluent_t = sum(effluent_t),
+  ) %>% 
+  ungroup() %>% 
+  mutate(total = effluent_o+ effluent_s +effluent_t) %>% 
+  left_join(country_name_df) %>% 
+  filter(!is.na(country_name)) %>% 
+  rename(open = effluent_o,
+         septic = effluent_s, 
+         treated = effluent_t) %>% 
+  select(ISO3, country_name, open, septic, treated, total) %>% 
+  mutate(ISO3 = country_name) %>% 
+  filter(total >= 10)
+
+#write_csv(nations_treat, "national_n_effluent_by_treatment.csv")
+
+x <- table(cut_width(runif(1000), 0.1))
+
+```
+
+```{r}
+world_order <- nations_treat %>% 
+  mutate(ISO3 = forcats::fct_reorder(ISO3, -total))
+
+
+bins <- nations_treat %>% 
+  mutate(bin = ntile(total, 6)) %>% 
+  select(ISO3, bin)
+
+nums <- c(rep(1,10),rep(2, 40), rep(3, 42), rep(4,42),rep(5,42),rep(6,42))
+
+bins2 <- nations_treat %>% 
+  arrange(-total) %>% 
+  mutate(bin = nums)%>% 
+  select(ISO3, bin)
+
+world_plot <- nations_treat %>% 
+  select(-total, -country_name) %>% 
+  pivot_longer(cols = -ISO3, names_to = "treatment_type") %>% 
+  left_join(bins2)
+
+
+world_plot$ISO3 <- factor(world_plot$ISO3, levels = levels(world_order$ISO3))
+
+world_plot_ready <- world_plot %>% 
+  arrange(ISO3)
+  
+  
+218/3
+
+
+first_half <- levels(world_order$ISO3) %>% 
+  head((length(.))/2)
+
+second_half <- levels(world_order$ISO3) %>% 
+  tail((length(.))/2)
+  
+
+first_half_plot <- ggplot(world_plot_ready %>% 
+                       filter(ISO3 %in% first_half), aes(x = ISO3, y = (value))) +
+  geom_col(aes(fill=treatment_type)) +
+  #scale_x_discrete(aes(labels = country_name)) %>% 
+  coord_flip() +
+      labs(
+        title = "National Nitrogen Effluent by Treatment Type",
+        x = "",
+        y = "Value",
+        legend = "") + 
+    ggpubr::theme_pubr() +
+       theme(
+        plot.title.position = "plot") +
+  scale_y_continuous(expand =c(0,0))+
+  theme(legend.title = element_blank(),
+        text = element_text(family = 'serif'))
+
+ggplot(world_plot_ready, aes(x = ISO3, y = (value))) +
+  geom_col(aes(fill=treatment_type)) +
+  #scale_x_discrete(aes(labels = country_name)) %>% 
+  coord_flip() +
+      labs(
+        title = "National Nitrogen Effluent by Treatment Type",
+        x = "",
+        y = "Value",
+        legend = "") + 
+    ggpubr::theme_pubr() +
+       theme(
+        plot.title.position = "plot") +
+  scale_y_continuous(expand =c(0,0))+
+  theme(legend.title = element_blank(),
+        text = element_text(family = 'serif'))+
+  facet_wrap(~bin, scales = "free")
+
+```
+
+
+
+```{r}
+
+
+nations <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/countries_N_Alldata.shp")
+
+country_name_df <- countrycode::codelist %>% 
+  select(country.name.en, iso3c) %>% 
+  rename(ISO3 = iso3c, 
+         country_name = country.name.en)
+
+nations_treat <- nations %>% 
+  select(ISO3, effluent_o, effluent_s, effluent_t, effluent_a) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(ISO3) %>% 
+  summarize(
+    effluent_o = sum(effluent_o), 
+    effluent_s = sum(effluent_s), 
+    effluent_t = sum(effluent_t),
+  ) %>% 
+  ungroup() %>% 
+  mutate(total = effluent_o+ effluent_s +effluent_t) %>% 
+  left_join(country_name_df) %>% 
+  filter(!is.na(country_name)) %>% 
+  rename(open = effluent_o,
+         septic = effluent_s, 
+         treated = effluent_t) %>% 
+  select(ISO3, country_name, open, septic, treated, total) %>% 
+  mutate(ISO3 = country_name) %>% 
+  filter(total >= 10)
+
+
+
+world_order <- nations_treat %>% 
+  mutate(ISO3 = forcats::fct_reorder(ISO3, -total))
+
+nums <- c(rep(1,10),rep(2, 40), rep(3, 42), rep(4,42),rep(5,42),rep(6,42))
+
+bins2 <- nations_treat %>% 
+  arrange(-total) %>% 
+  mutate(bin = nums)%>% 
+  select(ISO3, bin)
+
+world_plot <- nations_treat %>% 
+  select(-total, -country_name) %>% 
+  pivot_longer(cols = -ISO3, names_to = "treatment_type") %>% 
+  mutate(value = value/1000) %>%
+  left_join(bins2)
+
+
+world_plot$ISO3 <- factor(world_plot$ISO3, levels = levels(world_order$ISO3))
+
+world_plot_ready <- world_plot %>% 
+  arrange(ISO3)
+
+
+ggplot(world_plot_ready, aes(x = ISO3, y = (value))) +
+  geom_col(aes(fill=treatment_type)) +
+  #scale_x_discrete(aes(labels = country_name)) %>% 
+  coord_flip() +
+  labs(
+    title = "National Total Nitrogen Effluent by Treatment Type",
+    x = "",
+    y = "Kg of Nitrogen",
+    legend = "") + 
+  theme_pubr(base_size = 10, base_family = "", border = FALSE,
+             margin = TRUE, legend = c("top", "bottom", "left", "right", "none"),
+             x.text.angle = 0)+
+  theme(
+    plot.title.position = "plot") +
+  scale_y_continuous(expand =c(0,0))+
+  theme(legend.title = element_blank(),
+        text = element_text(family = 'serif'))+
+  facet_wrap(~bin, scales = "free")
+
+val <- world_plot_ready %>% 
+  filter(bin == 4) %>% 
+  max(value)
+
+ggplot(world_plot_ready %>% filter(bin == 4), aes(x = ISO3, y = (value))) +
+  geom_col(aes(fill=treatment_type)) +
+  ylim(-3000000, 10809090) +
+  coord_polar()+
+  facet_wrap(~bin)
+
+```
+
+# map raster
+```{r}
+eff_N <- raster("home/shares/ohi/git-annex/land-based/wastewater/data/processed/effluent_N_colored.tif")
+
+
+```
+
+
+
+# load data for flowerplot
+```{r}
+nations <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/countries_N_Alldata.shp")
+```
+
+
+```{r}
+country_name_df <- countrycode::codelist %>% 
+  select(country.name.en, iso3c, region) %>% 
+  rename(ISO3 = iso3c, 
+         country_name = country.name.en)
+
+nations_treat <- nations %>% 
+  select(ISO3, effluent_o, effluent_s, effluent_t, effluent_a) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(ISO3) %>% 
+  summarize(
+    effluent_o = sum(effluent_o), 
+    effluent_s = sum(effluent_s), 
+    effluent_t = sum(effluent_t),
+  ) %>% 
+  ungroup() %>% 
+  mutate(total = effluent_o+ effluent_s +effluent_t) %>% 
+  left_join(country_name_df) %>% 
+  filter(!is.na(country_name)) %>% 
+  rename(open = effluent_o,
+         septic = effluent_s, 
+         treated = effluent_t) %>% 
+  select(ISO3, country_name, region, open, septic, treated, total) %>% 
+  filter(total >= 10)
+
+rank_georgn <- nations_treat %>% 
+  group_by(region) %>% 
+  summarise(mean_total=mean(total), 
+            count = length(total)) %>% 
+  arrange(mean_total)
+
+nations_treat$region <- factor(nations_treat$region, levels=rank_georgn$region)
+
+### Organize the chi data and add a few extra variables to help plotting
+# Including empty spaces to add a y-axes
+
+rank_rgn <- nations_treat %>%
+  arrange(region, total)
+
+# add empty space
+empty_bar <- nrow(rank_georgn)-1
+to_add <- data.frame(matrix(NA, empty_bar, ncol(rank_rgn)) )
+colnames(to_add) = colnames(rank_rgn)
+to_add$country_name <- as.character(1:empty_bar)
+rank_rgn  <- rbind(to_add, rank_rgn)
+
+```
+
+
+
+# some code to orient the country labels
+```{r}
+
+sequence_length = length(unique(rank_rgn$country_name))
+first_sequence  = c(1:(sequence_length%/%2)) 
+second_sequence = c((sequence_length%/%2+1):sequence_length) 
+first_angles    = c(90 - 180/length(first_sequence) * first_sequence)
+second_angles   = c(-90 - 180/length(second_sequence) * second_sequence)
+
+rank_rgn$angle <- c(first_angles,second_angles)
+rank_rgn$hjust <- c(rep(0, length(first_sequence)), 
+                    rep(1, length(second_sequence)))
+
+# color for region labels
+rank_rgn <- rank_rgn %>%
+  mutate(country_name = factor(country_name, unique(country_name))) %>%
+  mutate(region = factor(region, unique(region))) %>%
+  mutate(color = "black") %>%
+  mutate(color = ifelse(is.na(total), "white", color))
+
+# add column to identify when georegion changes
+rgn_shift <- rank_rgn %>%
+  mutate(region = ifelse(is.na(region), "tmp", region)) %>%
+  mutate(region = as.factor(region)) %>%
+  mutate(region_shift = as.numeric(region) - lag(as.numeric(region)), default=first(as.numeric(region)))
+
+rgn_shift <- which(rgn_shift$region_shift > 0)
+rgn_shift <- c(1, rgn_shift) -0.5
+rgn_shift <- data.frame(rgn_shift_x=rgn_shift,
+                        region = rank_georgn$region,
+                        name_x= c(25, 51, 68, 90, 110, 145, 200), # 140
+                        name_y= c(0.1, 0.1, 0.1, 0.12, 0.11, 0.1, 0.11))
+rgn_shift <- rgn_shift %>%
+  mutate(region = as.character(region))# %>%
+  mutate(region = ifelse(region == "Latin America and the Caribbean", "Latin America and\nthe Caribbean",
+                            region))
+
+```
+
+# load impacts
+```{r}
+impacts <- nations %>% 
+  select(ISO3, effluent_o, effluent_s, effluent_t, effluent_a) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(ISO3) %>% 
+  summarize(
+    effluent_o = sum(effluent_o), 
+    effluent_s = sum(effluent_s), 
+    effluent_t = sum(effluent_t),
+  ) %>% 
+  ungroup() %>% 
+  mutate(total = effluent_o+ effluent_s +effluent_t) %>% 
+  left_join(country_name_df) %>% 
+  filter(!is.na(country_name)) %>% 
+  rename(open = effluent_o,
+         septic = effluent_s, 
+         treated = effluent_t) %>% 
+  select(ISO3, country_name, region, open, septic, treated, total) %>% 
+  filter(total >= 10) %>% 
+  select(-total) %>% 
+  pivot_longer(cols = c(open, treated, septic), names_to = "treatment_type") %>% 
+  select(ISO3, treatment_type, value)
+
+impacts <- rank_rgn %>% 
+  left_join(impacts)
+```
+
+
+
+```{r}
+library(beyonce)
+myPalette <- c(beyonce_palette(18, 15, type=c("continuous"))[1:6],
+               beyonce_palette(18, 25, type=c("continuous"))[15:18],
+               beyonce_palette(18, 15, type=c("continuous"))[8],
+               beyonce_palette(18, 20, type=c("continuous"))[16:19])
+
+
+## some theme stuff to make the circle plot look nice
+
+circle_theme <- theme(axis.line=element_blank(),
+                      axis.text.y=element_blank(),
+                      axis.ticks=element_blank(),
+                      axis.title.x=element_blank(),
+                      axis.title.y=element_blank(),
+                      legend.position="none",
+                      panel.background=element_blank(),
+                      panel.border=element_blank(),
+                      panel.grid.major=element_blank(),
+                      panel.grid.minor=element_blank(),
+                      plot.background=element_blank(),
+                      axis.text.x = element_blank())
+```
+
+
+
+```{r}
+ ggplot(data=impacts, aes(x=country_name, y=log(value+1), fill=treatment_type)) + 
+  geom_bar(stat="identity") +
+  geom_errorbar(aes(x = 1, ymin = -0.13, ymax=0.25), alpha=0)  +
+  #geom_text(data=rank_rgn, aes(x=rgn_name, y=0.16, label=rgn_name_short, angle=angle, hjust=hjust, color=color), inherit.aes = FALSE) +
+  geom_segment(x = 5, y = 0, xend = dim(rank_rgn)[1]+1, yend = 0, colour = "black", alpha=1, size=0.5) +
+  #geom_segment(x = 7, y = -0.05, xend = dim(rank_rgn)[1]-1, yend = -0.05, colour = "gray", alpha=1, size=0.5) +
+ # annotate("text", x = c(3,3,3,3), y = c(-0.05, 0, 0.05, 0.1), label = c(-0.05, 0, 0.05, 0.1), color="darkgrey", angle=-8, size=4) +
+  scale_colour_identity() +
+  #scale_fill_manual(values=myPalette) +
+  coord_polar() +
+  circle_theme
+  geom_segment(data = rgn_shift, aes(x=rgn_shift_x, xend=rgn_shift_x, y=rep(-0.05, dim(rgn_shift)[1]), yend=rep(0.2, dim(rgn_shift)[1])), colour="gray", size=0.5, inherit.aes=FALSE) #+
+  geom_text(data=rgn_shift, aes(x=name_x, y=name_y, label=georegion), inherit.aes=FALSE, size=5) +
+  #geom_point(data=chi, aes(y=chi, x=rgn_name), fill="black", shape="|", size=2.5) +
+  circle_theme
+```
+
+
+
+
+
+
+
+

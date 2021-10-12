@@ -1,0 +1,342 @@
+---
+title: "figures for wastewater"
+author: "Gordon Blasco"
+date: "2/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# FINAL FIGS FOR MS
+
+### Totals
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(sf)
+
+
+N_sheds <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/effluent_N_watersheds_all.shp") %>% 
+  mutate(area = st_area(.)) %>% 
+  dplyr::select(basin_id, area, tot_N) %>% 
+  rename(tot_N_sheds = tot_N) %>% 
+  st_set_geometry(NULL)
+
+
+world_sf <- sf::st_read("/home/shares/ohi/git-annex/land-based/wastewater/data/interim/world_vector.shp")
+
+n_points <- sf::read_sf(
+  "/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/effluent_N_pourpoints_all.shp"
+  ) %>% 
+  left_join(N_sheds)%>% 
+  st_set_crs(st_crs(world_sf))
+  
+
+
+
+total_global_n <- sum(n_points$tot_N, na.rm = TRUE)/1e+12
+
+total_open_n <- sum(n_points$open_N, na.rm = TRUE)/1e+12
+total_septic_n <- sum(n_points$septic_N, na.rm = TRUE)/1e+12
+total_treated_n <- sum(n_points$treated_N, na.rm = TRUE)/1e+12
+
+
+top_25_sheds <- n_points %>% 
+  arrange(-tot_N) %>% 
+  head(25) 
+
+total_top_25_n <- sum(top_25_sheds$tot_N, na.rm = TRUE)/1e+12
+```
+
+
+We found that wastewater inputs into coastal waters account for an estimated `r round(total_global_n, 1)`Tg N of total anthropogenic N in coastal ecosystems globally.
+
+
+
+Of this total wastewater N, `r round((total_treated_n/total_global_n)*100, 0)`% (`r round(total_treated_n, 1)`Tg N) comes from sewered systems, `r round((total_septic_n/total_global_n)*100, 0)`% (`r round(total_septic_n, 1)`Tg N) from septic, and `r round((total_open_n/total_global_n)*100, 0)`% (`r round(total_open_n, 1)`Tg N) from direct input. 
+
+
+Just 25 watersheds contribute approximately `r round((total_top_25_n /total_global_n)*100, 0)`% (`r round(total_top_25_n, 1)`Tg N) of global N inputs from wastewater into the ocean.
+
+### Abstract
+
+Wastewater adds `r round(total_global_n, 1)`Tg nitrogen into coastal waters, which is approximately 40% of total nitrogen from agriculture, with `r round((total_septic_n/total_global_n)*100, 0) + round((total_open_n/total_global_n)*100, 0)`% coming from septic and direct inputs. We find that just 25 watersheds contribute nearly half of all wastewater N
+
+
+
+# look at contributions:
+```{r}
+
+n_contributions <- n_points %>% 
+  mutate(prop_sewered = treated_N/tot_N,
+         prop_open = open_N/tot_N)
+
+```
+
+```{r}
+num_pours_no_N <- n_points %>% 
+  filter(tot_N == 0)
+
+top_1_sheds <- n_points %>% 
+  arrange(-tot_N) %>% 
+  head(1)
+
+total_top_1_sheds <- sum(top_1_sheds$tot_N, na.rm = TRUE)/1e+12
+```
+
+Wastewater input of N from watersheds into coastal waters is highly concentratedskewed, with half (n=`r nrow(num_pours_no_N)`) of all watersheds adding no nitrogen or pathogens, and a single watershed - the Chang Jiang (Yangtze) River in northern China - accounting for a third (`r round((total_top_1_sheds/total_global_n)*100, 0)`%) of global wastewater N. 
+
+```{r}
+FIO_sheds <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/FIO_effluent_output/effluent_FIO_watersheds.shp")
+
+top_25_sheds_fio <- FIO_sheds %>% 
+  arrange(-effluent) %>% 
+  head(25)
+
+total_global_FIO <- sum(FIO_sheds$effluent, na.rm = TRUE)#/1e+12
+
+total_25_sheds_FIO <- sum(top_25_sheds_fio$effluent, na.rm = TRUE)#/1e+12
+
+total_25_sheds_FIO/total_global_FIO
+
+```
+
+To explore this issue, we modeled input into coastal oceans of fecal indicator organisms (FIO) from watersheds and found that just 25 watersheds contribute approximately `r round((total_25_sheds_FIO/total_global_FIO)*100, 0)`% of FIO into the ocean. 
+
+
+How many people are on each treatment type
+```{r}
+sanfac <- read_csv(file.path("/home/shares/ohi/git-annex/land-based/wastewater/data/interim/country_sanitation_factors.csv")) 
+san_perc <- sanfac %>% 
+  mutate(national_treated_pop = population_thousands* (national_treated*.01))
+
+
+sum(san_perc$national_treated_pop)/sum(san_perc$population_thousands)
+
+
+#top_25_sheds %>% left_join(sanfac)
+```
+
+```{r}
+N_sheds <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/effluent_N_watersheds_all.shp") %>% 
+  mutate(area = st_area(.)) %>% 
+  dplyr::select(basin_id, area, tot_N) %>% 
+  rename(tot_N_sheds = tot_N)%>% 
+  st_set_crs(st_crs(world_sf))
+
+
+```
+
+
+
+working on supplemnetal sheets
+```{r}
+names <- tribble(
+      ~basin_id,   ~name,           ~country,
+      # total pourpoint names
+      "af_17918",  "Congo River",                 "DRC",
+      "af_15969",  "Niger River",                 "Niger",
+      "af_16862",  "Nile River",                  "Egypt",
+      "af_09315",  "Shatt al-Arab",               "Iraq",
+      "sa_06694",  "Rio Parana",                  "Argentina",
+      "na_75069",  "Mississippi River",           "USA",
+      
+      
+      
+      "eu_30333",  "Danube River",                "Romania",
+      
+      
+      
+      "eu_27181",  "Dnieper River",               "Ukraine",
+      "eu_27295",  "Rhine River",                 "Netherlands",
+      "al_12731",  "Yangtze River",                 "China",
+      "af_17918",  "Congo River",                 "DRC",
+      
+      
+      
+      
+      # normalized country names
+      "ai_07771",  "Taozi Bay",                  "China",
+      "na_76159",  "Laguna de la Leche",         "Mexico",
+      "ai_07801",  "Kongtong Island / Zhifu Bay","China",
+      "eu_29729",  "Barcelona",                  "Spain",
+      "al_12503",  "Xiamen Port",                "China",
+      "na_77387",  "Varadero",                   "Cuba",
+      "ai_32463",  "Indonesia",                  "Indonesia",
+      "na_80747",  "Veracruz",                   "Mexico",
+      "eu_30871",  "Zeytinburnu/Istanbul",       "Turkey",
+      "ai_07406",  "Osaka",                      "Japan",
+      "al_12903",  "Hong Kong",                  "Hong Kong",
+      "af_18168",  "Island of Mozambique",       "Mozambique",
+      "na_80064",  "Cancun",                     "Mexico",
+      "eu_22236",  "Earnse Bay",                 "United Kingdom",
+      "al_10768",  "Jiaozhou Wan/Qingdao",       "China",
+      "eu_31939",  "Cadiz",                      "Spain",
+      "al_13345",  "Bohe Harbor",                "China",
+      "ai_07036",  "Tomoe River",                "Japan",
+      "na_73926",  "Ciudad Juarez",              "Mexico",
+      "eu_26817",  "Lake Neusiedl" ,             "Hungary",
+      "eu_30892",  "Istanbul",                   "Turkey",
+      "ai_09953",  "Quintang River",             "China",
+      "af_07718",  "Casablanca",                 "Morocco",
+      "al_12879",  "Hong Kong",                  "Hong Kong",
+      "ai_06838",  "Tokyo",                      "Japan",
+      
+      
+      "al_15872",  "Singapore",                      "Singapore",
+      "al_15899",  "Singapore",                      "Singapore",
+      "al_15909",  "Singapore",                      "Singapore",
+      "al_15910",  "Singapore",                      "Singapore",
+      
+      "al_12915",  "Hong Kong",                      "Hong Kong",
+      
+      
+      # from an old email
+      "al_12731",	"Shanghai", "China",
+      "al_13237",	"Meghna River", "Bangladesh",
+      "al_13478",	"Shenwan", "China",
+      "af_16862",	"Alexandria", "Egypt",
+      "al_11370",	"Binzhou", "China",
+      "al_11956",	"Keti Bandar", "Pakistan",
+      "af_15969",	"Bross River", "Nigeria",
+      "al_09132",	"Amur River", "Russia",
+      "eu_30333",	"Danube", "Russia",
+      "eu_27295",	"Haringvilet", "Netherlands",
+      "sa_06694",	"Rio Parana Cuazu", "Argentina",
+      "al_10872",	"Tianjin", "China",
+      "na_75069",	"Mississippi River", "United States of America",
+      "al_14328",	"Krishnia River", "India",
+      "al_10213",	"Dongli District", "China",
+      "al_11575",	"Shanghai", "China",
+      "af_17918",	"Congo River", "Democratic Republic of the Congo",
+      "al_11201",	"Chenjiagang", "China",
+      "al_14070",	"Godavari River", "India",
+      "af_09315",	"Basrah", "Iraq",
+      "al_12164",	"Dayapar", "India",
+      "al_14362",	"Pathein", "Myanmar",
+      "al_15348",	"Song My Tho River", "Vietnam",
+      "al_11925",	"Hangzhou", "China",
+      "al_09282",	"Zhaoquanhe", "China",
+      "al_13085",	"Arpangasia River", "Bangladesh",
+      "eu_28816",	"Venice", "Italy",
+      "sa_05339",	"Amazon River", "Brazil",
+      "al_11174",	"Huanghua", "China",
+      "eu_26533",	"Hamburg", "Germany",
+      "al_08811",	"Ob River", "Russia",
+      "eu_27181",	"Kherson", "Ukraine",
+      "af_18922",	"Zombeze River", "Mozambique",
+      "al_13812",	"Song Hong River", "Vietnam",
+      "na_80861",	"Tampico", "Mexico",
+      "al_13731",	"Mahanadi River", "India",
+      "al_12997",	"Kolkata", "India",
+      "al_14679",	"Kollidam River", "India",
+      "na_80866",	"Rio Grande de Santiago", "Mexico",
+      "al_12971",	"Surat", "India",
+      "al_12384",	"Fuzhou", "China",
+      "eu_27133",	"Rostov-On-Don", "Russia",
+      "sa_02874",	"Barranquilla", "Colombia",
+      "af_16525",	"Jubba River", "Somalia",
+      "al_11161",	"Dezhou", "China",
+      "af_09155",	"Cairo", "Egypt",
+      "al_12837",	"Namada River", "India",
+      "af_15535",	"Keta Lagoon", "Ghana",
+      "al_14437",	"Mawlamyine", "Myanmar",
+      "sa_05394",	"Sao Francisco River", "Brazil",
+      "ai_07771",	"Yantai", "China",
+      "ai_07801",	"Yantai", "China",
+      "ai_09953",	"Putuo", "China",
+      "eu_29729",	"Barcelona", "Spain",
+      "af_18168",	"Island of", "Mozambique	Mozambique",
+      "eu_30871",	"Istanbul", "Turkey",
+      "al_12503",	"Xiamen City", "China",
+      "eu_30851",	"Istanbul", "Turkey",
+      "al_10759",	"Qingdao", "China",
+      "al_12957",	"Mumbai", "India",
+      "al_12872",	"Shenzhen", "China",
+      "eu_31303",	"Naples", "Italy",
+      "al_12918",	"Hong Kong", "China",
+      "al_10768",	"Qingdao", "China",
+      "na_70998",	"New York", "United States of America",
+      "al_09724",	"Xinghua", "China",
+      "eu_30892",	"Istanbul", "Turkey",
+      "al_12986",	"Mumbai", "India",
+      "eu_17835",	"Saint Petersburg", "Russia",
+      "ai_11658",	"Haikou", "China",
+      "na_70978",	"New York", "United States of America",
+      "ai_07406",	"Osaka", "Japan",
+      "na_71080",	"New York", "United States of America",
+      "af_03174",	"Istanbul", "Turkey",
+      "al_12913",	"Tsing Yi", "China",
+      "af_06240",	"Algiers", "Algeria",
+      "eu_31939",	"Cadiz", "Spain",
+      "al_12879",	"Shenzhen", "China",
+      "al_12842",	"Shenzhen", "China",
+      "al_12969",	"Mumbai", "India",
+      "ai_18595",	"Rach Gia", "Vietnam",
+      "al_12945",	"Mumbai", "India",
+      "ai_26762",	"Hood Lagoon", "Papua New Guinea",
+      "al_13057",	"Chattogram", "Bangladesh",
+      "eu_28029",	"Venice", "Italy",
+      "al_12852",	"Shenzhen", "China",
+      "al_12911",	"Hong Kong", "Hong Kong",
+      "eu_34046",	"Augusta", "Italy",
+      "eu_31335",	"Naples", "Italy",
+      "al_10776",	"Qingdao", "China",
+      "ai_07411",	"Osaka", "Japan",
+      "eu_28021",	"Venice", "Italy",
+      "al_12965",	"Mumbai", "India",
+      "af_08203",	"Tel Aviv", "Israel",
+      "af_15260",	"Freetown", "Sierra Leone",
+      "na_71048",	"Brooklyn", "United States of America",
+      "af_14514",	"Bissau", "Guinea-Bissau",
+      "sa_03359",	"Belem", "Brazil",
+      "ai_10752",	"Kaohsiung City", "Taiwan",
+      "al_12863",	"Shenzhen", "China"
+      ) %>% 
+  distinct(basin_id, .keep_all = TRUE)
+```
+
+
+```{r}
+
+N_sheds <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/effluent_N_watersheds_all.shp") %>% 
+  mutate(area = st_area(.)) %>% 
+  dplyr::select(basin_id, area, tot_N) %>% 
+  rename(tot_N_sheds = tot_N) %>% 
+  st_set_crs(st_crs(world_sf))
+
+#work on later
+supp_source <- n_points %>% 
+  st_set_geometry(NULL) %>% 
+  mutate(norm_N = tot_N/ area) %>% 
+  arrange(-norm_N) %>% 
+  mutate(normalized_n_rank = 1:nrow(.)) %>% 
+  arrange(-tot_N) %>% 
+  mutate(total_n_rank = 1:nrow(.))  %>% 
+  left_join(names)
+
+
+s2_top_25_norm <- supp_source %>% 
+  arrange(-norm_N) %>% 
+  head(25) 
+
+
+
+s1_final <- supp_source %>% 
+  arrange(-tot_N) %>% 
+  head(25) %>%
+  bind_rows(s2_top_25_norm) %>% 
+  select(basin_id, 
+         country, 
+         name,
+         tot_N, 
+         norm_N,
+         total_n_rank,
+         normalized_n_rank
+         )
+
+
+```
+
+
+$$\\[1in]$$

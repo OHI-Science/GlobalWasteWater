@@ -1,0 +1,172 @@
+---
+title: "Untitled"
+author: "Gordon Blasco"
+date: "5/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(sf)
+library(ggpubr)
+library(patchwork)
+library(here)
+library(WDI)
+
+library(countrycode)
+
+
+cc <- countrycode::codelist %>% 
+  select(#"un.name.en", 
+         #country.name.en, 
+         #iso3n, 
+         iso2c, iso3c) 
+```
+
+# two ideas for figure 4:
+ - basin normalization by area
+ - country level sanititon breakdown
+```{r}
+source(here("code", "file_names.R"))
+
+sanfac <- read_csv(file.path("/home/shares/ohi/git-annex/land-based/wastewater/data/interim/country_sanitation_factors.csv"))
+
+vec_world <- st_read(world_vector_fn) %>% 
+  filter(poly_type == "GADM")
+```
+
+
+```{r}
+sanfac_tidy <- sanfac %>% 
+  filter(urban_sf != 0 & rural_sf != 0)
+
+sanfac_prep <- sanfac
+
+ggplot(sanfac_tidy, aes(x = urban_sf, y = rural_sf))+
+  geom_point()+
+labs(
+  title = "Urban by Rural Sanitation Factors",
+  x = "Urban Sf",
+  y = "Rural Sf"
+ ) + 
+ theme(
+ text = element_text(family = 'serif'),
+ plot.title.position = "plot"
+ )
+
+
+
+# gdp map 
+
+ppp <- WDI(country = "all", indicator = c("NY.GDP.MKTP.PP.CD", "NY.GDP.MKTP.CD", "NY.GDP.PCAP.CD"), start = NULL,
+  end = NULL, extra = FALSE, cache = NULL) %>% 
+  filter(year == 2013) %>% 
+  dplyr::select(-year) %>% 
+  left_join(., cc) %>% 
+  rename(iso3 = iso3c)
+
+sf_ppp <- sanfac_tidy %>% 
+  left_join(., ppp) 
+
+
+ggplot(sf_ppp, aes(x = urban_sf, y = log10(NY.GDP.MKTP.PP.CD)))+
+  geom_point()+
+labs(
+  title = "Urban by Rural Sanitation Factors",
+  x = "Urban Sf",
+  y = "Rural Sf"
+ ) + 
+ theme(
+ text = element_text(family = 'serif'),
+ plot.title.position = "plot"
+ )
+
+```
+
+
+# create maps for each type 
+```{r}
+world_df <- vec_world %>% 
+  left_join(sanfac_prep, by = c("ISO3" = "iso3"))
+
+p1 <- ggplot(world_df, aes(geometry = geometry, fill = urban_sf))+
+  geom_sf()+
+  labs(title = "Urban")
+
+p2 <- ggplot(world_df, aes(geometry = geometry, fill = rural_sf))+
+  geom_sf()+
+  labs(title = "Rural")
+
+first_plot <- p1/p2 + plot_annotation(
+  title = 'Saniation factors for urban and rural populations'#,
+  #subtitle = 'These 3 plots will reveal yet-untold secrets about our beloved data-set',
+  #caption = 'Disclaimer: None of these plots are insightful'
+) & labs_pubr()
+
+
+ggsave(plot = first_plot, 
+       device = "png",
+       width = 12,
+       height = 8,
+       dpi = 300,
+       units = "in",
+       limitsize = FALSE,
+       filename = "world_sf_maps.png")
+
+
+#sanfac_prep <- sanfac_tidy 
+  
+
+#st_geometry(world_df) <- NULL 
+
+#check_df <- world_df %>% 
+#  left_join(sanfac_prep, by = c("ISO3" = "iso3"))
+
+#check_df2 <- sanfac_prep %>% 
+#  left_join(world_df, by = c("iso3" = "ISO3"))
+
+
+ut <- ggplot(world_df, aes(geometry = geometry, fill = urban_open))+
+  geom_sf()+
+  labs(title = "Urban - Open")
+us <- ggplot(world_df, aes(geometry = geometry, fill = urban_septic))+
+  geom_sf()+
+  labs(title = "Urban - Septic")
+uo <- ggplot(world_df, aes(geometry = geometry, fill = urban_treated))+
+  geom_sf()+
+  labs(title = "Urban - Treated")
+
+
+rt <- ggplot(world_df, aes(geometry = geometry, fill = rural_open))+
+  geom_sf()+
+  labs(title = "Rural - Open")
+rs <- ggplot(world_df, aes(geometry = geometry, fill = rural_septic))+
+  geom_sf()+
+  labs(title = "Rural - Septic")
+ro <- ggplot(world_df, aes(geometry = geometry, fill = rural_treated))+
+  geom_sf()+
+  labs(title = "Rural - Treated")
+
+patches <- (ut|rt) / (us|rs) / (uo|ro) &
+  labs_pubr()
+
+ggsave(plot = patches, 
+       device = "png",
+       width = 24,
+       height = 18,
+       dpi = 300,
+       units = "in",
+       limitsize = FALSE,
+       filename = "six_plots.png")
+
+```
+
+```{r}
+
+```
+

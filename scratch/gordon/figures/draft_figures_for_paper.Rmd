@@ -1,0 +1,154 @@
+---
+title: "Draft figures for paper"
+author: "Gordon Blasco"
+date: "4/3/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(sf)
+library(tidyverse)
+library(patchwork)
+```
+
+
+```{r}
+source(here::here("code","file_names.R"))
+
+# load files 
+pours     <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/pourpoints_N_Alldata.shp")
+pours_crs <- sf::read_sf(N_pourpoints_fn)
+nations   <- sf::read_sf(world_vector_fn)
+eez       <- sf::read_sf(eez_fn)
+
+simple_eez <- eez %>% 
+  st_simplify(dTolerance = .1)
+
+# set the crs
+used_crs <- st_crs(pours_crs)
+
+st_crs(pours) <- used_crs
+st_transform(nations, used_crs)
+st_transform(eez, used_crs)
+
+# simplify_pours_data
+tidy_pours <- pours %>% 
+  select(sum, effluent_o, effluent_s, effluent_t) #%>% 
+  #filter(sum > 0)
+
+
+# st_join to add the polygon name to each point
+pours_first <- st_join(tidy_pours, eez, join = st_intersects) 
+
+# group by polygon name and sum the ammount of effluent for each treatment type. 
+#   ISO_Ter1
+
+sum_gross_stuff <- pours_first %>% 
+  as.data.frame() %>% 
+  select(-geometry) %>% 
+  filter(!is.na(ISO_Ter1)) %>% 
+  group_by(ISO_Ter1) %>% 
+  summarise(
+    total_effluent = sum(sum, na.rm = TRUE),
+    open_effluent = sum(effluent_o, na.rm = TRUE),
+    septic_effluent = sum(effluent_s, na.rm = TRUE),
+    treated_effluent = sum(effluent_t, na.rm = TRUE),
+  ) %>% 
+  pivot_longer(-ISO_Ter1) 
+  
+perc_contrib <- pours_first %>% 
+  as.data.frame() %>% 
+  select(-geometry) %>% 
+  filter(!is.na(ISO_Ter1)) %>% 
+  group_by(ISO_Ter1) %>% 
+  summarise(
+    total_effluent = sum(sum, na.rm = TRUE),
+    open_effluent = sum(effluent_o, na.rm = TRUE),
+    septic_effluent = sum(effluent_s, na.rm = TRUE),
+    treated_effluent = sum(effluent_t, na.rm = TRUE),
+  ) %>% 
+  mutate(
+    perc_open = (open_effluent/ total_effluent)*100,
+    perc_septic = (septic_effluent/ total_effluent)*100,
+    perc_treated = (treated_effluent/ total_effluent)*100
+  ) %>% 
+  select(ISO_Ter1,total_effluent, perc_open, perc_septic, perc_treated) %>% 
+  pivot_longer(-ISO_Ter1) 
+
+
+
+
+
+
+plot_df <- simple_eez %>% 
+  left_join(sum_gross_stuff) %>% 
+  filter(!is.na(name))
+
+
+plot_df_perc <- simple_eez %>% 
+  left_join(perc_contrib) %>% 
+  filter(!is.na(name))
+
+```
+
+
+
+```{r}
+# plot_df_test <- eez[1:10,] %>% 
+#   left_join(sum_gross_stuff) %>% 
+#   st_simplify()
+
+white
+
+total <- ggplot(plot_df_perc %>% filter(name == "total_effluent"))+
+  geom_sf(aes(fill = value), color = "black")+
+  theme_classic() +
+  scale_fill_gradient(low = "white", high = "brown", na.value = NA)+
+  labs(title = "total")
+
+open <-  ggplot(plot_df_perc %>% filter(name == "perc_open"))+
+  geom_sf(aes(fill = value), color = "black")+
+  theme_classic() +
+  scale_fill_gradient(low = "white", high = "brown", na.value = NA)+
+  labs(title = "open")
+
+
+septic <-  ggplot(plot_df_perc %>% filter(name == "perc_septic"))+
+  geom_sf(aes(fill = value), color = "black")+
+  theme_classic() +
+  scale_fill_gradient(low = "white", high = "brown", na.value = NA)+
+  labs(title = "septic")
+
+treated <-  ggplot(plot_df_perc %>% filter(name == "perc_treated"))+
+  geom_sf(aes(fill = value), color = "black")+
+  theme_classic() +
+  scale_fill_gradient(low = "white", high = "brown", na.value = NA)+
+  labs(title = "treated")
+  
+  
+
+(total / open /  septic /treated) & 
+  theme(legend.position = "none")
+
+( open /  septic /treated) +
+  plot_layout(guides = 'collect')
+
+
+ggplot(plot_df_perc %>% filter(name != "total_effluent"))+
+  geom_sf(aes(fill = value), color = "black")+
+  theme_classic() +
+  scale_fill_gradient(low = "white", high = "brown", na.value = NA)+
+  labs(title = "Percent contribution N from treatment type")+
+  facet_wrap(~name, ncol = 1)
+
+
+#ggsave("world_plot.png", plot = simple_plot, width = 10, height = 7)
+
+
+```
+

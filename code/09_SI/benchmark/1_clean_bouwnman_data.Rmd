@@ -1,0 +1,155 @@
+---
+title: "Download and clean benchmark data"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    code_folding: show
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "benchmark")) })
+---
+
+
+```{r setup}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE,
+	message = FALSE
+)
+
+# Load packages
+suppressPackageStartupMessages({
+  library(here)
+  library(janitor)
+  library(knitr)
+  library(kableExtra)
+  library(rnaturalearth)
+  library(tidyverse)
+})
+
+source(here("code", "file_names.R"))
+```
+
+# About the data
+
+In 2005,Bouwman et al published a paper titled ["Exploring changes in river nitrogen export to the world's oceans"](https://doi.org/10.1029/2004GB002314). As part of their supplementary maeterials, they include "nitrogen removal in wastewater treatment, and human N emission" for each county at different points in time. Here, we will download their supplementary file and wrangle it to put it into a useful format.
+
+Their supplementary materials can be found at[https://agupubs.onlinelibrary.wiley.com/action/downloadSupplement?doi=10.1029%2F2004GB002314&file=gbc1123-sup-0002-auxiliary_material_data.txt](https://agupubs.onlinelibrary.wiley.com/action/downloadSupplement?doi=10.1029%2F2004GB002314&file=gbc1123-sup-0002-auxiliary_material_data.txt).
+
+# Download the data
+
+We could technically read the data directly from the url. But just in case, let's download a raw version of the data first. We'll download this data into the shared data folder on `mazu`. Per [this GH issue](https://github.com/OHI-Science/wastewater_issues/issues/6), that is `/home/shares/ohi/git-annex/land-based/wastewater/`. In this path, I'll save the raw data into the `raw_data` folder, and the clean data into the `interim` data folder.
+
+```{r download}
+# Define URL
+url <- "https://agupubs.onlinelibrary.wiley.com/action/downloadSupplement?doi=10.1029%2F2004GB002314&file=gbc1123-sup-0002-auxiliary_material_data.txt"
+
+# Download adn save the file
+download.file(url = url, destfile = bouwman_raw_fn, mode = "wb")
+```
+
+# Cleaning the data
+
+First, let's read in the data. After inspecting it directly in the [URL](https://agupubs.onlinelibrary.wiley.com/action/downloadSupplement?doi=10.1029%2F2004GB002314&file=gbc1123-sup-0002-auxiliary_material_data.txt), I know the following:
+
+- I need to skip the first 8 lines to get to the data
+- The deta has double headers: one with variable names and another one for years
+- The data have 35 columns, but the first header has `Country` and `iso_code` split, while it should be `Country_iso_code`
+- In the second header, the first two columns are `#`, indicating that they are empty.
+
+Let's fix all these.
+
+## Propper column neames
+
+```{r read}
+# Get the first header line
+header_1 <- scan(file = bouwman_raw_fn, nlines = 1, skip = 7, what = character())
+# Modify the first value of this
+header_1 <- c(paste(header_1[1], header_1[2], sep = "_"), #combine the first two elements into one
+              header_1[-c(1:2)]) #Add the rest
+
+# Get the second header line
+header_2 <- scan(file = bouwman_raw_fn, nlines = 1, skip = 8, what = character())
+# Replace the "#" for empty characters
+header_2[1:2] <- ""
+
+# Combine the first and second rows
+header <- paste0(header_1, header_2)
+
+# Use janitor to clean these names
+header <- make_clean_names(header)
+
+# Inspect our headers
+header
+```
+
+```{r}
+#
+bouwman <- read_delim(file = bouwman_raw_fn, delim = "\t", skip = 9, col_names = header)
+
+bouwman
+```
+
+## Keeping what matters
+
+The table above has a lot of information, and most of it may not be relevant. First, let's keep only the columns that are relevant and for 1995. Then, I'll rename some columns to have more intuitive names.
+
+```{r}
+bouwman <- bouwman %>% 
+  select(country_iso_code, country_name, contains("95"), -contains("gdp")) %>% 
+  rename(country_iso = country_iso_code,
+         pop_ths = population_1000_inhabitants_1995,
+         pct_urban = urbanization_percent_1990_95,
+         pct_urban_access_sanitation = urban_population_with_access_to_improved_sanitation_percent_1990_95,
+         pct_rural_access_sanitation = rural_population_with_access_to_improved_sanitation_percent_1990_95,
+         pct_pop_connected_sewerage = population_connected_to_sewerage_percent_1990_95,
+         pct_n_removal_treatment_plants = n_removal_in_wastewater_treatment_plants_percent_1990_95,
+         n_emmission_kg_inhabitant = n_emission_kg_inhabitant_year_1990_95) %>% 
+  mutate(total_n_emitted = (1 - pct_n_removal_treatment_plants  / 100) * (1 - pct_pop_connected_sewerage / 100) * n_emmission_kg_inhabitant)
+
+bouwman
+```
+
+# Visualize the data
+
+# As a map
+
+```{r}
+countries <- ne_countries(returnclass = "sf") %>% 
+  mutate(iso_n3 = as.numeric(iso_n3)) %>% 
+  left_join(bouwman, by = c("iso_n3" = "country_iso"))
+
+ggplot(data = countries,
+       mapping = aes(fill = n_emmission_kg_inhabitant)) +
+  geom_sf(size = 0, color = "black") +
+  startR::ggtheme_map()
+```
+
+# Export the data
+
+```{r}
+write.csv(x = bouwman,
+          file = bouwman_fn,
+          row.names = F)
+```
+
+
+
+# Reproducibility
+
+## System info
+
+```{r systeminfo}
+Sys.info()
+```
+
+## Session info
+
+```{r sessioninfo}
+sessionInfo()
+```
+
+
+
+
+

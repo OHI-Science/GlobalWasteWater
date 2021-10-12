@@ -1,0 +1,375 @@
+---
+title: "Pakistan DHS Cluster Mapping"
+author: "Gordon Blasco"
+date: "9/9/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Load Libraries & Shape Files
+```{r}
+library(tidyverse)
+library(rdhs)
+library(leaflet)
+library(sf)
+library(sp)
+library(raster)
+library(here)
+
+
+library(tmap)
+library(spatstat)
+library(maptools)
+# library(rgdal)
+library(gstat)
+
+pk_shape <- readRDS("gadm36_PAK_0_sp.rds")
+
+
+source(here::here("code","file_names.R"))
+
+```
+
+## Set credentials for DHS
+```{r}
+set_rdhs_config(email = "gordonblasco@gmail.com",
+                project = "Global Wastewater")
+
+```
+
+# Use DHS api to extract data
+```{r}
+indicators <- dhs_indicators()
+indicators[1,]
+
+tags <- dhs_tags()
+
+# 70 is the tag for toilet facilities
+
+
+data <- dhs_data(tagIds          = 70,
+                 countryIds      = c("PK"),
+                 breakdown       ="background",
+                 surveyYearStart = 2010,
+                 returnGeometry  = TRUE)
+
+
+sc <- dhs_survey_characteristics()
+```
+
+```{r}
+# lets find all the surveys that fit our search criteria
+survs <- dhs_surveys(#surveyCharacteristicIds = 89,
+                     countryIds = c("PK"),
+                     surveyType = "DHS",
+                     surveyYearStart = 2013)
+
+
+
+# and lastly use this to find the datasets we will want to download and let's download the flat files (.dat) datasets (have a look in the dhs_datasets documentation for all argument options, and fileformat abbreviations etc.)
+datasets <- dhs_datasets(surveyIds = survs$SurveyId, 
+                         fileFormat = "flat")
+str(datasets)
+
+# download datasets
+downloads <- get_datasets(datasets$FileName)
+```
+
+## Reference table from recode manual
+```{r}
+
+hv205_ref <- tribble(
+~hv205,      ~hv205_ref,                             ~input_type,
+  10,      "FLUSH TOILET",                              "NA",
+  11,      "Flush to piped sewer system",               "sewer",
+  12,      "Flush to septic tank",                      "septic",
+  13,      "Flush to pit latrine",                      "direct",
+  14,      "Flush to somewhere else",                   "NA",
+  15,      "Flush, dont know where",                    "NA",
+  20,      "PIT TOILET LATRINE",                        "direct",
+  21,      "Ventilated Improved Pit latrine (VIP)",     "direct",
+  22,      "Pit latrine with slab",                     "direct",
+  23,      "Pit latrine without slab/open pit",         "direct",
+  30,      "NO FACILITY",                               "direct",
+  31,      "No facility/bush/field",                    "direct",
+  41,      "Composting toilet",                         "direct",
+  42,      "Bucket toilet",                             "direct",
+  43,      "Hanging toilet/latrine",                    "direct",
+  96,      "Other",                                     "NA",
+  99,      "Missing",                                   "NA"
+  )  %>% 
+  mutate(input_score = case_when(
+    input_type == "sewer"  ~ 0.01,
+    input_type == "septic" ~ 0.316,
+    input_type == "direct" ~ 0.3,
+  ))
+
+# treat_param1 = 0.01
+# treat_param2 = 0.001
+# treat_param3 = 0.0001
+# septic_param = 0.316
+# open_param = 0.3
+
+
+```
+
+
+
+
+
+
+
+# Get toilet facility data for Pakistan and make reference tables. 
+```{r}
+pk <- readRDS(downloads$PKPR71FL) %>% 
+  dplyr::select(1:10, "hv025", "hv205") 
+
+
+pk_sum <- pk %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  group_by(hv001) %>% 
+  summarise(
+    sanitation_factor = mean(input_score)
+  )
+
+pk_geo <- readRDS(downloads$PKGE71FL)
+pk_geo_data <- pk_geo@data
+```
+
+
+
+# Prepare data for becoming a raster. 
+```{r}
+
+pk_geo_prep <- pk_geo_data %>% 
+  dplyr::select(
+    "DHSCLUST",
+    "URBAN_RURA",
+    "LATNUM",
+    "LONGNUM"
+  ) %>% 
+  mutate(DHSCLUST = as.integer(DHSCLUST)) 
+  
+sanfac <- read_csv(sanit_factors_fn) %>% 
+  filter(country == "Pakistan")
+
+
+pk_mapped <- pk_sum %>%
+  rename(DHSCLUST = hv001) %>%
+  left_join(pk_geo_prep) #%>% 
+ # mutate(sanfac = case_when(URBAN_RURA == "R" ~ rural))
+  #left_join(hv205_ref) %>% 
+  #filter(input_type != "NA")
+
+
+
+
+```
+
+```{r}
+sanfac_prep <- sanfac %>% 
+  dplyr::select(15:23) %>% 
+  pivot_longer(everything(), names_to = "name", values_to = "value") %>% 
+  mutate(URBAN_RURA = case_when(
+    str_detect(name, "^rural") ~ "R",
+    str_detect(name, "^urban") ~ "U",
+    str_detect(name, "^national") ~ "Nat"
+  ),
+    sf_type = str_extract(name, "....$")
+  ) %>% 
+  dplyr::select(-name) %>% 
+  pivot_wider(id_cols = -sf_type, names_from = sf_type) %>% 
+  dplyr::select(URBAN_RURA, sf_h)
+```
+
+
+
+```{r}
+pk_national <- pk %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(pk_geo_prep) %>% 
+  summarise(sanfac_from_DHS = mean(input_score, na.rm = TRUE)#,
+#            dhs_error = sd(input_score, na.rm = TRUE)
+) %>% 
+  mutate(URBAN_RURA = "Nat")
+
+
+pk_urb_rural <- pk %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(pk_geo_prep) %>% 
+  group_by(URBAN_RURA) %>% 
+  summarise(sanfac_from_DHS = mean(input_score),
+            #dhs_error = sd(input_score, na.rm = TRUE)
+            ) %>% 
+  bind_rows(pk_national) %>% 
+  left_join(sanfac_prep) %>% 
+  rename(DHS = sanfac_from_DHS, 
+         Estimated = sf_h) %>% 
+  pivot_longer(-URBAN_RURA, names_to = "source", values_to = "sanitation_factor") %>% 
+  mutate(type = case_when(
+    URBAN_RURA == "R" ~ "Rural",
+    URBAN_RURA == "U" ~ "Urban",
+    URBAN_RURA == "Nat" ~ "National"
+  )) %>% 
+  rename(Source = source)
+  
+  
+  
+
+ggplot(pk_urb_rural, aes(x = type, y = sanitation_factor)) +
+  geom_col(aes(fill = Source), position = position_dodge()) +
+  # geom_errorbar(aes(ymin = sanfac_from_DHS - dhs_error, 
+  #                   ymax = sanfac_from_DHS - dhs_error))+
+  #facet_wrap(~URBAN_RURA) +
+  theme_classic() +
+  scale_fill_manual(values=c('#EA7580','#1BB6AF')) +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_discrete(expand = c(0,0)) +
+  labs(
+    title = "Sanitation Factor Comparison for Pakistan",
+    x = "",
+    y = "Sanitation Factors",
+    legend = "Data"
+  ) +
+  theme(text=element_text(family="sansserif"))
+
+```
+
+
+
+# Transform to sf and sp data types.
+```{r}
+pk_sf  <-  st_as_sf(pk_mapped, coords = c("LONGNUM", "LATNUM"), 
+                 crs = 4326)
+
+writePointsShape(pk_sf, "pakistan_shapefile")
+write_sf(pk_sf, "pakistan_shapefile.shp")
+```
+
+```{r}
+# Plot with tmap:
+tm_shape(pk_shape) +
+  tm_fill() +
+  tm_shape(pk_sf) +
+  tm_dots("sanitation_factor", size = 0.2)
+```
+
+```{r}
+
+pk_sp  <- as_Spatial(pk_sf)
+```
+
+
+# attempt to krige... mistake.
+```{r}
+
+# bbox(ks_sp) to check bounding box of the spatial points
+long <- seq(60.8742484882, 77.8374507995, length.out = 200)
+lat <- seq(23.6919650335, 37.1330309108, length.out = 200)
+
+# Then make it into a grid: 
+grid <- expand.grid(lon = long, lat = lat)
+grid_sf <- st_as_sf(grid, coords = c("lon","lat"), crs = 4326)
+grid_sp <- as_Spatial(grid_sf)
+```
+
+```{r}
+# ks_vgm <- variogram(input_score ~ 1, pk_sp)
+# plot(ks_vgm)
+# 
+# ks_vgm_fit <- fit.variogram(ks_vgm, model = vgm(nugget = 0.2, psill = 0.8, model = "Sph", range = 200))
+# 
+# plot(ks_vgm, ks_vgm_fit)
+# 
+# ks_krige <- krige(input_score ~ 1, pk_sp, grid_sp, model=ks_vgm_fit, nmax = 5)
+
+```
+
+```{r}
+# pk_krige_df <- as.data.frame(ks_krige)
+# pk_krige_2 <- pk_krige_df %>% 
+#   rename(lon = coords.x1, lat = coords.x2, predicted = var1.pred, err = var1.var)
+# 
+# waste_predicted  <-  st_as_sf(pk_krige_2, coords = c("lon", "lat"), 
+#                  crs = 4326)
+# 
+# sf_shape  <-  st_as_sf(pk_shape, 
+#                  crs = 4326)
+# 
+# waste_cropped <- st_intersection(waste_predicted, sf_shape)
+```
+
+```{r}
+ # tm_shape(waste_predicted) +
+ #  tm_dots("predicted", size = 0.05) +
+ #  tm_shape(pk_shape) +
+ #  tm_borders()
+```
+
+
+
+# Use idw interpolation instead.
+```{r}
+
+#pk_sp_clipped <- st_intersection(pk_sf, sf_shape)
+# 
+# grd              <- as.data.frame(spsample(pk_sp, "regular", n=50000))
+# names(grd)       <- c("X", "Y")
+# coordinates(grd) <- c("X", "Y")
+# gridded(grd)     <- TRUE  # Create SpatialPixel object
+# fullgrid(grd)    <- TRUE  # Create SpatialGrid object
+# 
+# # Add P's projection information to the empty grid
+# proj4string(grd) <- proj4string(pk_sp)
+# 
+# # Interpolate the grid cells using a power value of 2 (idp=2.0)
+# P.idw <- gstat::idw(input_score ~ 1, pk_sp, newdata=grd, idp=2.0)
+# 
+# # Convert to raster object then clip to Texas
+# r       <- raster(P.idw)
+# r.c   <- crop(r, extent(pk_shape))
+# r.m     <- mask(r.c, pk_shape)
+# 
+# plot(r.m)
+# plot(r.c)
+# plot(pk_sp)
+# plot(r)
+# 
+# # Plot
+# tm_shape(r.m) + 
+#   tm_raster(n=10,palette = "YlOrRd",
+#             title="Estimated Sanitation Score") + 
+#   tm_shape(pk_shape) +
+#   tm_borders() +
+#   tm_legend(legend.outside=TRUE)
+# 
+# plot(pk_shape)
+```
+
+
+```{r}
+
+```
+
+

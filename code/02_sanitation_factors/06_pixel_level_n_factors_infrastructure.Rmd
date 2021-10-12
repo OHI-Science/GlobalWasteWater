@@ -1,0 +1,182 @@
+---
+title: "Pixel-level nitrogen removal factors for each infrastructure"
+author: "last run by: `r Sys.info()['user']`"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "1_sanfact")) })
+---
+
+```{r setup, include=FALSE, message = FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(here)
+  library(raster)
+  library(fasterize)
+  library(sf)
+  library(tidyverse)
+})
+
+# set file paths
+source(here("code", "file_names.R"))
+```
+
+Sanitation factors were calculated at the country level (for rural and urban) by Gordon. Here, we'll take those values and assign them to 1km pixels to obtain a gridded version of country-level sanitation factors dat account for urban / rural characteristics as well as river presence.
+
+Each country has four values of sanitation factors. These represent the factorial combinations between urban/rural and river/no river. We do this because centers away from rivers (more than 1 km) are unlikely to deposit N into the watershed.
+
+```{r sanitation_factors}
+n_factors <- read.csv(nitrogen_factors_imputed_fn,
+                     stringsAsFactors = F) %>% 
+  select(ISO3, contains("_n"), -contains("national"))
+
+n_factors
+```
+
+We can look at these values on a map
+
+```{r spatial_sf}
+world_vector_sf <- st_read(world_vector_fn) %>% 
+  left_join(n_factors, by = c("ISO3" = "ISO3"))
+```
+
+Cascade has provided a raster that classifies population into urban and rural. It looks like this:
+
+```{r rural_urban_raster}
+rural_urban_input <-raster(rural_urban_binary_fn)
+# Codes: -200 = NaN, 10 = Water, 111 = Rural, 222 = Urban
+rec <- c(-201, 11, NA, 11, 112, 0, 113, 223, 1)
+recmat <- matrix(rec, ncol = 3, byrow = T)
+
+rural_urban_input <- reclassify(x = rural_urban_input,
+                                rcl = recmat)
+```
+
+```{r river inpunt}
+river <- raster(riv_15s_coastlines_fn) #load river raster
+```
+
+The goal is then to take the country-level sf in the first figure, and assign each pixel in the second with the appropriate sf value. First, let's rasterize the countries using the sf values.
+
+## Rasterize
+
+Now that the fudge factors are attributed to polygons, we'll rasterize them.
+
+### Open
+
+```{r rasterize_open}
+# Infrastructure-specific
+## Rural
+n_raster_rural_open <- fasterize(sf = world_vector_sf,
+                                 raster = rural_urban_input,
+                                 field = "rural_n_open")
+
+n_raster_urban_open <- fasterize(sf = world_vector_sf,
+                                 raster = rural_urban_input,
+                                 field = "urban_n_open")
+```
+
+```{r combine_open}
+n_raster_rural_urban_open <- n_raster_urban_open
+n_raster_rural_urban_open[rural_urban_input == 0] <- n_raster_rural_open[rural_urban_input == 0]
+n_raster_rural_urban_open <- river * n_raster_rural_urban_open
+```
+
+```{r}
+file.remove(nitrogen_factors_open_raster_fn)
+writeRaster(x = n_raster_rural_urban_open,
+            filename = nitrogen_factors_open_raster_fn)
+
+# Remove rasters to save space
+rm(n_raster_urban_open)
+rm(n_raster_rural_open)
+```
+
+
+### Septic
+
+```{r rasterize_septic}
+# Infrastructure-specific
+n_raster_rural_septic <- fasterize(sf = world_vector_sf,
+                            raster = rural_urban_input,
+                            field = "rural_n_septic")
+
+n_raster_urban_septic <- fasterize(sf = world_vector_sf,
+                            raster = rural_urban_input,
+                            field = "urban_n_septic")
+```
+
+```{r combine_septic}
+n_raster_rural_urban_septic <- n_raster_urban_septic
+n_raster_rural_urban_septic[rural_urban_input == 0] <- n_raster_rural_septic[rural_urban_input == 0]
+n_raster_rural_urban_septic <- river * n_raster_rural_urban_septic
+```
+
+```{r export_septic}
+file.remove(nitrogen_factors_septic_raster_fn)
+writeRaster(x = n_raster_rural_urban_septic,
+            filename = nitrogen_factors_septic_raster_fn)
+
+# Remove rasters to save space
+rm(n_raster_urban_septic)
+rm(n_raster_rural_septic)
+```
+
+```{r visualize_septic}
+rasterVis::levelplot(n_raster_rural_urban_septic)
+```
+
+
+### Treated
+
+```{r rasterize_treated}
+n_raster_rural_treated <- fasterize(sf = world_vector_sf,
+                            raster = rural_urban_input,
+                            field = "rural_n_treated")
+
+n_raster_urban_treated <- fasterize(sf = world_vector_sf,
+                            raster = rural_urban_input,
+                            field = "urban_n_treated")
+```
+
+```{r combine_treated}
+n_raster_rural_urban_treated <- n_raster_urban_treated
+n_raster_rural_urban_treated[rural_urban_input == 0] <- n_raster_rural_treated[rural_urban_input == 0]
+```
+
+```{r export_treated}
+file.remove(nitrogen_factors_treated_raster_fn)
+writeRaster(x = n_raster_rural_urban_treated,
+            filename = nitrogen_factors_treated_raster_fn)
+
+# Remove rasters to save space
+rm(n_raster_urban_treated)
+rm(n_raster_rural_treated)
+```
+
+
+```{r visualize}
+rasterVis::levelplot(n_raster_rural_urban_treated)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,183 @@
+---
+title: "National level sanitation factor data cleaning"
+author: "Gordon Blasco"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "sanfact")) })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+library(tidyverse)
+library(readxl)
+library(stringr)
+library(janitor)
+library(here)
+
+source(here("code","file_names.R"))
+
+```
+
+# Read in the data and create new column names based on the heirarchical structure from the sheet. 
+
+This is kind of ugly but these column names were a mess. 
+
+The top three rows were all column name information. I used some for-loops to fill in the spaces between the top and mid level groupings then combined them in to one (although quite verbose) column name vector. 
+
+Then I re-read in the raw data, skipping the first three rows, and assigned the column names from the vector. I double checked this was right and made sure the names lined up with what was in the original data sheet. Then I did a little more cleaning where I dropped some empty columns and got rid of some repeated information. Nothing crazy. 
+
+
+```{r}
+file_name <- file.path(data_dir, "JMP_2019_WLD.xlsx")
+
+raw_data <- read_xlsx(file_name, sheet = "Sanitation", 
+                      col_names = FALSE)
+
+headers <- raw_data[1:3,] %>% 
+  t() %>% 
+  as.data.frame()%>%
+  rownames_to_column() %>% 
+  #unite(col = "top", 
+  #      c(2,3)) %>% 
+  select(-rowname) %>%
+  rename(
+    top = V1,
+    mid = V2,
+    bot = V3
+  )
+ # mutate(top = str_remove(top, pattern = "_NA"))%>% 
+ # mutate(top = str_remove(top, pattern = "^NA_")) %>% 
+ # mutate(top = replace(top, str_detect(top, "^NA$"), NA))
+
+y = nrow(headers)
+
+
+for (i in 1:y) {
+  
+  if(is.na(headers$top[i]) == TRUE){
+    headers$top[i] <-  headers$top[i-1]
+  } else{
+    headers$top[i] <-  headers$top[i]
+  }
+  
+}
+
+headers <- headers %>% 
+  mutate(top = as.character(top), 
+         mid = as.character(mid),
+         bot = as.character(bot)) %>% 
+  mutate(mid = replace(mid, str_detect(mid, 'excluding shared'), 'excluding_shared')) %>% 
+  mutate(mid = replace(mid, str_detect(mid, 'including shared'), 'including_shared')) 
+  
+
+for (i in 1:y) {
+  
+  if(is.na(headers$mid[i]) == TRUE){
+    headers$mid[i] <-  headers$mid[i-1]
+  } else{
+    headers$mid[i] <-  headers$mid[i]
+  }
+  
+}
+
+
+headers <- headers %>% 
+ mutate(mid = replace(mid, str_detect(mid, ','), NA))  
+
+
+```
+
+# clean the column names a bit more, then make a new dataframe with those as the names and then pull for use as the column names for the excel sheet. 
+```{r}
+col_names <- headers %>% 
+  unite(col = "col_names",
+        c(top, mid, bot),
+        sep = "-") %>% 
+  mutate(col_names = str_remove(col_names, pattern = "-NA")) %>% 
+  mutate(col_names = str_remove(col_names, pattern = "-NA")) %>% 
+ # mutate(col_names = str_remove(col_names, pattern = "-NA")) %>% 
+  pull(col_names)
+
+number_of_cols <- length(col_names)
+
+df <- data.frame(matrix(ncol = number_of_cols, nrow = 0))
+
+colnames(df) <- col_names 
+
+clean_names <- df %>% 
+  clean_names() %>% 
+  names()
+
+```
+
+# Read in data with cleaned column names
+```{r}
+
+clean_data <- read_xlsx(file_name, sheet = "Sanitation", 
+                      col_names = clean_names,
+                      skip = 3) 
+
+
+test <- clean_data %>% 
+  select(sanitation, year)
+
+test2 <- clean_data %>% 
+  select(sanitation_2, year_2) %>% 
+  rename(
+    year = year_2,
+    sanitation = sanitation_2
+  )
+
+
+diff_df <- setdiff(test, test2)
+
+# "-" = no estimate.	flag this as a country to be removed
+
+```
+
+```{r}
+clean_data2 <- clean_data %>% 
+  select(-sanitation_2, -year_2, -year_3) %>% 
+  rename(country = sanitation,
+         sl = urban_including_shared_sl)
+```
+
+# once file paths are figured out I will know where to save all of this. 
+```{r}
+
+inter_dir_fix <- "/home/shares/ohi/git-annex/land-based/wastewater/data/interim"
+
+#
+write_csv(clean_data2, file.path(inter_dir_fix, "clean_sanfac_2019.csv"))
+#
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,218 @@
+---
+title: "Comparing our N to Mayorga's N"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    code_folding: show
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "benchmark")) })
+---
+
+# Load data
+
+```{r setup}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+# Load packages
+suppressPackageStartupMessages({
+  library(startR)
+  library(here)
+  library(rnaturalearth)
+  library(sf)
+  library(tidyverse)
+})
+
+source(here("code", "file_names.R"))
+```
+
+```{r}
+global_news <- st_read(global_news_clean_fn) %>% 
+  filter(!just_one)
+
+N_pourpoints <- st_read(N_pourpoints_fn) %>% 
+  mutate(effluent = effluent / 1000) %>% 
+  st_transform(crs = st_crs(global_news))
+```
+
+```{r}
+global_news_buffer <- global_news %>% 
+  st_buffer(dist = 0.1) %>% 
+  st_difference()
+
+global_news_buffer2 <- global_news %>% 
+  st_buffer(dist = 0.25) %>% 
+  st_difference()
+
+global_news_buffer3 <- global_news %>% 
+  st_buffer(dist = 0.5) %>% 
+  st_difference()
+
+global_news_buffer4 <- global_news %>% 
+  st_buffer(dist = 1) %>% 
+  st_difference()
+```
+
+```{r}
+
+my_names <- function(x, dist) {
+  c(x[1:(length(x) - 1)], paste0("our_n_in_buffer_", dist))
+  }
+
+combine_points_and_buffer <- function(points, buffer, dist){
+  st_join(points, buffer, join = st_within) %>% 
+    st_set_geometry(NULL) %>% 
+    group_by(id, basin_name, dn_tot) %>%
+    summarize(our_n = sum(effluent, na.rm = T)) %>% 
+    ungroup() %>% 
+    magrittr::set_colnames(my_names(colnames(.), dist))
+}
+```
+
+
+```{r}
+pts <- combine_points_and_buffer(N_pourpoints, global_news_buffer4, 1) %>% 
+  left_join(combine_points_and_buffer(N_pourpoints, global_news_buffer3, 0.5)) %>% 
+  left_join(combine_points_and_buffer(N_pourpoints, global_news_buffer2, 0.25)) %>% 
+  left_join(combine_points_and_buffer(N_pourpoints, global_news_buffer, 0.1))
+```
+
+
+```{r}
+prop_data <- pts %>% 
+  mutate(prop0.1 = our_n_in_buffer_0.1 / dn_tot,
+         prop0.25 = our_n_in_buffer_0.25 / dn_tot,
+         prop0.5 = our_n_in_buffer_0.5 / dn_tot,
+         prop1 = our_n_in_buffer_1 / dn_tot)
+```
+
+```{r}
+
+prop_data %>% 
+  select(id, contains("prop")) %>% 
+  gather(buffer, proportion, -id) %>% 
+  # filter(proportion < 1) %>% 
+  ggplot(mapping = aes(x = proportion, y = buffer)) +
+  ggridges::geom_density_ridges2() +
+  theme_bw() +
+  labs(x = "Proportion (Our estimate / observed total)")
+```
+
+```{r}
+prop_data %>% 
+  select(id, contains("prop")) %>% 
+  gather(buffer, proportion, -id) %>% 
+  group_by(buffer) %>% 
+  summarize(mean = mean(proportion, na.rm = T),
+            sd = sd(proportion, na.rm = T),
+            median = median(proportion, na.rm = T),
+            n = sum(!is.na(proportion))) 
+```
+
+
+```{r}
+prop_data %>% 
+  select(id, contains("prop")) %>% 
+  gather(buffer, proportion, -id) %>% 
+  # filter(proportion < 1) %>%
+  group_by(buffer) %>% 
+  summarize(mean = mean(proportion, na.rm = T),
+            sd = sd(proportion, na.rm = T),
+            median = median(proportion, na.rm = T),
+            n = sum(!is.na(proportion))) %>% 
+  ggplot(aes(x = buffer, y = mean)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0) +
+  ggtheme_plot(font_size = 14) +
+  labs(x = "Buffer size", y = "Mean proportion of Nitrogen (SD)") +
+  scale_x_discrete(labels = c("0.1°", "0.25°", "0.5°", "1°"))
+```
+
+
+```{r}
+pts %>%
+  ggplot(aes(x = log10(dn_tot), y = log10(our_n_in_buffer_0.5))) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  coord_equal() +
+  scale_x_continuous(limits = c(1, 9.5)) +
+  scale_y_continuous(limits = c(1, 9.5)) +
+  labs(x = "Observed Total (Kg N yr-1)", y = "Ours estimate (Kg N yr-1)") +
+  theme_bw()
+```
+
+```{r}
+pts %>%
+  drop_na() %>% 
+  ggplot(aes(x = dn_tot, y = our_n_in_buffer_0.5)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  # coord_equal() +
+  # scale_x_continuous(limits = c(1, 9.5)) +
+  # scale_y_continuous(limits = c(1, 9.5)) +
+  labs(x = "Observed Total (Kg N yr-1)", y = "Our Estimate (Kg N yr-1)") +
+  theme_bw()
+```
+
+
+```{r}
+pts %>%
+  select(dn_tot, contains("buffer")) %>% 
+  drop_na(our_n_in_buffer_0.5) %>% 
+  gather(buffer, value, -dn_tot) %>% 
+  mutate(buffer = str_remove(buffer, "our_n_in_buffer_")) %>% 
+  ggplot(aes(x = log10(dn_tot), y = log10(value), color = buffer)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  coord_equal() +
+  scale_x_continuous(limits = c(1, 9.5)) +
+  scale_y_continuous(limits = c(1, 9.5)) +
+  labs(x = "Observed Total (Kg N yr-1)", y = "Ours estimate (Kg N yr-1)") +
+  theme_bw() +
+  scale_color_brewer(palette = "Set1") +
+  guides(color = guide_legend("Buffer size\n(decimal degrees)")) +
+  theme(legend.justification = c(0, 1),
+        legend.position = c(0,1),
+        legend.background = element_rect(fill = "transparent"))
+```
+
+
+
+
+```{r}
+intersected_buffers <-
+  st_join(N_pourpoints, global_news_buffer3, join = st_within) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(id, basin_name, dn_tot) %>%
+  summarize(our_n = sum(effluent, na.rm = T)) %>% 
+  ungroup() %>% 
+  mutate(proportion = our_n / dn_tot,
+         percent = proportion * 100)
+
+intersected_buffers_for_export <- global_news_buffer3 %>% 
+  left_join(intersected_buffers, by = c("id", "basin_name", "dn_tot"))
+
+file.remove(benchmarking_N_with_percentages_fn)
+st_write(intersected_buffers_for_export, benchmarking_N_with_percentages_fn)
+```
+
+```{r}
+ggplot(intersected_buffers, aes(x = proportion)) +
+  geom_density(fill = "gray") +
+  theme_bw()+
+  labs(x = "Proportion (Our estimate / observed total)")
+```
+
+
+```{r}
+intersected_buffers_for_export %>% 
+  st_set_geometry(NULL)
+```
+
+
+
+
+

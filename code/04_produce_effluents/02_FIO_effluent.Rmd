@@ -1,0 +1,53 @@
+---
+title: "Pixel-level effluent"
+author: "last run by: `r Sys.info()['user']`"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs")) })
+---
+
+```{r setup, include = FALSE, message = FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(here)
+  library(raster)
+  library(tidyverse)
+})
+
+# set file paths
+source(here("code", "file_names.R"))
+```
+
+Here I will calculate pixel-level effluent. This is the product of population size in each pixel, the country-level per capita yearly caloric intake, and the sanitation factors derived before. Therefore:
+
+$$
+E_i = P_i \times SF_i
+$$
+
+First, I'll read the three rasters.
+
+```{r load data}
+pop <- raster(pop_fn)
+sf_raster_rural_urban <- raster(sf_raster_rural_urban_fn)
+```
+
+Then, multiply one times the other.
+
+```{r multiply rasters}
+effluent <- pop * sf_raster_rural_urban
+```
+
+Then, we visualize the "effluent". The visualization is in log-scale, but  the data are not really in log-scale.
+
+```{r plot preview}
+plot(calc(effluent, log), main = "log-transformed effluent (pop * sf_low)")
+```
+
+And then we export it as a tiff
+
+```{r export}
+file.remove(effluent_FIO_fn)
+writeRaster(x = effluent,
+            filename = effluent_FIO_fn)
+```
+

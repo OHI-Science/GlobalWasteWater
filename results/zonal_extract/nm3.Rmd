@@ -1,0 +1,57 @@
+---
+title: ""
+output: html_document
+---
+
+```{r}
+install.packages("rgdal")
+library(RColorBrewer)
+
+library(rgdal)
+library(raster)
+library(sf)
+
+library(dplyr)
+library(stringr)
+library(readr)
+
+library(here)
+
+library(mapview)
+library(maps)
+library(ggplot2)
+
+# Map of the world:
+library("rnaturalearth")
+library("rnaturalearthdata")
+
+
+source("https://raw.githubusercontent.com/OHI-Science/ohiprep_v2019/gh-pages/workflow/R/common.R")
+ohi_rasters()
+region_data()
+
+cols <- rev(colorRampPalette(brewer.pal(11, 'Spectral'))(255)) # rainbow color scheme
+cols <- cols[150:255]
+
+```
+
+
+N data
+```{r}
+
+n_stressor <- raster("/home/shares/ohi/git-annex/land-based/wastewater/melanie/global_effluent_2015_all_raw_mol_nonegs_clean.tif")
+
+rgns_3nm <- raster::raster(file.path(dir_M, "git-annex/globalprep/spatial/v2018/rgns_3nm_offshore_mol.tif"))
+plot(rgns_3nm)
+
+
+chi_data <- zonal(n_stressor, rgns_3nm, fun="mean", progress="text", na.rm=TRUE)
+
+chi_data_df <- data.frame(chi_data) %>%
+  rename("rgn_id" = zone) %>%
+  inner_join(rgns_eez, by="rgn_id")
+
+write_csv(chi_data_df, here("side_projects/ww2/data/eez_3nm_wastewaterN.csv"))
+
+```
+

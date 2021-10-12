@@ -1,0 +1,77 @@
+---
+title: "Data Sets"
+author: "Jared Kibele"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: TRUE 
+    toc_float: TRUE
+    pandoc_args: ["--output=../docs/datasets.html"]
+---
+
+The datasets used in this project fit into three categories: input data, intermediate data, and output. Paths to all datasets will be set in `code/file_names.R`, and this file will be sourced in individual Rmarkdown files to set the file paths.
+
+## Input Data
+
+These data sets originated externally to this project. A couple were from previous NCEAS projects, but most were from elsewhere.
+
+#### Sanitation Data
+
+Describe it here.
+
+#### Regions
+
+Evaluated, but not used. Describe it anyway.
+
+#### GADM
+
+Describe it.
+
+#### Population Density
+
+"The Gridded Population of the World, Version 4 (GPWv4): Population Density Adjusted to Match 2015 Revision of UN WPP Country Totals, Revision 11 consists of estimates of human population density (number of persons per square kilometer) based on counts consistent with national censuses and population registers with respect to relative spatial distribution, but adjusted to match the 2015 Revision of the United Nation's World Population Prospects (UN WPP) country totals, for the years 2000, 2005, 2011, 2015, and 2020."
+
+We actually used the v10 2015 data. We'll upgrade to v11 if we run it again. More information can be found [here](http://sedac.ciesin.columbia.edu/data/set/gpw-v4-population-density-adjusted-to-2015-unwpp-country-totals-rev11/metadata).
+
+#### World EEZs
+
+Describe
+
+#### Watersheds
+
+Deee scribe
+
+
+
+## Intermediate Data
+
+Some of these files were written out just to break up the processing tasks, while others may be useful in their own right. I'll describe each of them and link to the code that produced them.
+
+These all need better descriptions, but I'm just trying to get organized at the moment. I'll fill in more later.
+
+#### Ocean Mask
+
+This will simply be a raster with 1s indicating ocean, and 0s indicating land. It will be derived from the GADM and it'll be in `ocean_mask.Rmd`.
+
+#### World Vector
+
+#### Sanitation Factors
+
+Originally "fudge factors".
+
+#### Effluent Density
+
+Probably need a more grown-up name for this, but I'm having a hard time letting go.
+
+#### Pour Points
+
+The original set of pour point locations was taken from a previous analysis on Mazu here: 
+```/home/shares/ohi/marine_threats/impact_layers_2013_redo/impact_layers/work/land_based/scripts_and_intermediary_layers/[6]_plume_prepare/output/og_blank``` 
+They were copied to `/home/shares/ohi/git-annex/land-based/wastewater/pour_points/global_plume_2007_2010.*`. They'll be processed in the `pour_points.Rmd` notebook.
+
+I don't know much about how these points were generated. ...persumably from the same elevation data used to create the watersheds... I'll need to look into that at some point.
+
+## Output
+
+This'll pretty much just be the raster file, and maybe a static map version as well as a leaflet slippy map version. All in a glorious yellow to brown color palatte.
+

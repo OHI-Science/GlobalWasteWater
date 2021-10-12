@@ -1,0 +1,427 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(rdhs)
+library(countrycode)
+library(here)
+
+set_rdhs_config(email = "gordonblasco@gmail.com",
+                project = "Global Wastewater")
+
+```
+
+
+```{r}
+available <- get_available_datasets()
+
+countries <- available %>% distinct(DHS_CountryCode)
+
+get_all_dhs_data <- function(country) {
+  
+  this_data   <- dhs_data(tagIds   = 70,
+                       countryIds      = c(country),
+                       breakdown       ="background",
+                       selectSurveys   ="latest",
+                       surveyYearStart = 2000,
+                       returnGeometry  = TRUE)
+  
+}
+
+possibly_get_dhs = possibly(get_all_dhs_data, otherwise = "something wrong here")
+
+
+countries_data <- countries %>% 
+  mutate(data = map(DHS_CountryCode, possibly_get_dhs))
+```
+
+
+```{r}
+
+have_geo_data <- available %>% 
+  filter(FileType == "Geographic Data") %>% 
+  pull(SurveyId)
+
+
+data_i_want <- available %>% 
+  filter(SurveyId %in% have_geo_data)
+
+
+
+
+geo_data <- get_datasets(have_geo_data$FileName)
+
+all_data <- get_datasets(available$FileName)
+
+```
+
+
+```{r}
+available <- get_available_datasets()
+
+countries_list <- available$DHS_CountryCode %>% 
+  unique()
+
+geo_data <- available %>% 
+  filter(str_detect(FileName, "GE71FL.ZIP")) %>% 
+  dplyr::select(SurveyNum, SurveyId, DHS_CountryCode, FileName) %>% 
+  rename(geo_FileName = FileName)
+
+files <- available %>% 
+  filter(str_detect(FileName, "PR71FL.ZIP")) %>% 
+  inner_join(geo_data) %>% 
+  filter(!is.na(geo_FileName))
+
+file_vector <- files %>% pull(FileName)
+
+downloads <- get_datasets(files$FileName)
+
+
+print(countries_list)
+```
+
+
+
+```{r}
+# get all datasets
+available <- get_available_datasets()
+
+# all surveys with geo data
+geo_data <- available %>% 
+  filter(str_detect(FileName, "GE71FL.ZIP")) %>% 
+  dplyr::select(SurveyNum, SurveyId, DHS_CountryCode, FileName) %>% 
+  rename(geo_FileName = FileName)
+
+# all household surveys that also have geo data
+files <- available %>% 
+  filter(str_detect(FileName, "PR71FL.ZIP")) %>% 
+  inner_join(geo_data) %>% 
+  filter(!is.na(geo_FileName))
+
+
+datasets <- get_datasets(files$FileName)
+
+geo_datasets <- get_datasets(files$geo_FileName)
+
+this_data <- datasets[[i]]
+
+household_data <- readRDS(this_data) %>% 
+    dplyr::select(1:10, "hv025", "hv205") 
+
+x <- list.files(path = "/home/blasco/.cache/rdhs/datasets") %>% 
+  as.data.frame()
+
+
+```
+
+```{r}
+available <- get_available_datasets()
+
+countries <- available %>% distinct(DHS_CountryCode)
+
+get_all_dhs_data <- function(country) {
+  
+  this_data   <- dhs_data(tagIds   = 70,
+                       countryIds      = c(country),
+                       breakdown       ="background",
+                       surveyYearStart = 2000:2015,
+                       returnGeometry  = TRUE)
+  
+  
+}
+
+
+get_all_dhs_surveys <- function(country) {
+  
+  this_data   <- dhs_data(tagIds   = 70,
+                       countryIds      = c(country),
+                       breakdown       ="background",
+                       surveyYear = 2000:2015,
+                       returnGeometry  = TRUE)# %>% 1
+  
+  #  dplyr::distinct(SurveyId) %>% 
+    #pull(SurveyId)
+  
+  
+}
+
+
+possibly_get_dhs         = possibly(get_all_dhs_data, otherwise = "something wrong here")
+possibly_get_dhs_surveys = possibly(get_all_dhs_surveys, otherwise = "something wrong here")
+
+
+countries_data <- countries %>% 
+  mutate(data = map(DHS_CountryCode, possibly_get_dhs_surveys))
+```
+
+
+#extract the list of surveyID's that meet our critera
+```{r}
+countries_data_new <- countries_data %>% 
+  filter(!data == "something wrong here") %>% 
+  separate_rows(data) %>% 
+  filter(data != "c" & data != "")# %>% 
+ #distinct(DHS_CountryCode, .keep_all = TRUE)
+  
+have_geo_data <- available %>% 
+  filter(FileType == "Geographic Data") #%>% 
+  pull(SurveyId)
+  
+  filters <- c("ALGC52FL.ZIP", "BJGC42FL.ZIP", "BJGC62FL.ZIP", "BOGC52FL.ZIP", "BUGC62FL.ZIP", "BUAR61FL.ZIP", "BUGC6BFL.ZIP", "CMGC42FL.ZIP", "CMar42fl.zip", "CMAR61FL.ZIP", "CMGC62FL.ZIP", "TDGC72FL.ZIP", "TDAR71FL.ZIP", "KMGC62FL.ZIP", "CIAR51FL.ZIP", "CIAR61FL.ZIP", "CIGC62FL.ZIP", "SZGC52FL.ZIP", "SZar51fl.zip", "GACR61FL.ZIP", "GABR61FL.ZIP", "GAHR61FL.ZIP", "GAIR61FL.ZIP", "GAKR61FL.ZIP", "GAGC62FL.ZIP", "GAMR61FL.ZIP", "GAPR61FL.ZIP", "GAAR61FL.ZIP", "GMAR60FL.ZIP", "GUGC72FL.ZIP", "GYGC5JFL.ZIP", "HNGC62FL.ZIP", "MBGC52FL.ZIP", "MAGC42FL.ZIP", "NIAR51FL.ZIP", "NIAR61FL.ZIP", "TJGC62FL.ZIP", "TLGC62FL.ZIP", "TGGC62FL.ZIP", "TGAR61FL.ZIP")
+
+available_surveys <- available %>% 
+  distinct(SurveyId) %>% 
+  pull(SurveyId)
+
+country_unlisted <- countries_data %>% 
+  rename(country_code = DHS_CountryCode) %>% 
+  filter(data != "something wrong here") %>% 
+  unnest(c(data)) %>% 
+  distinct(SurveyId) %>% 
+  filter(!(SurveyId %in% available_surveys)) %>% 
+  pull(SurveyId) 
+
+
+  
+datasets <- dhs_datasets(surveyIds =country_unlisted,
+                         fileFormat = "flat") 
+
+
+
+
+downloads <- get_datasets(datasets$FileName)
+
+```
+# run this 
+```{r}
+hv205_ref <- tribble(
+~hv205,      ~hv205_ref,                             ~input_type,
+  10,      "FLUSH TOILET",                              "NA",
+  11,      "Flush to piped sewer system",               "sewer",
+  12,      "Flush to septic tank",                      "septic",
+  13,      "Flush to pit latrine",                      "direct",
+  14,      "Flush to somewhere else",                   "NA",
+  15,      "Flush, dont know where",                    "NA",
+  20,      "PIT TOILET LATRINE",                        "direct",
+  21,      "Ventilated Improved Pit latrine (VIP)",     "direct",
+  22,      "Pit latrine with slab",                     "direct",
+  23,      "Pit latrine without slab/open pit",         "direct",
+  30,      "NO FACILITY",                               "direct",
+  31,      "No facility/bush/field",                    "direct",
+  41,      "Composting toilet",                         "direct",
+  42,      "Bucket toilet",                             "direct",
+  43,      "Hanging toilet/latrine",                    "direct",
+  96,      "Other",                                     "NA",
+  99,      "Missing",                                   "NA"
+  )  %>% 
+  mutate(input_score = case_when(
+    input_type == "sewer"  ~ 0.01,
+    input_type == "septic" ~ 0.316,
+    input_type == "direct" ~ 0.3
+  ))
+intermediate_dir <- "/home/shares/ohi/git-annex/land-based/wastewater/data/interim"
+sanit_factors_fn <- file.path(intermediate_dir, "country_sanitation_factors.csv") # country level sanitation factors for urban and rural
+sanfac <- read_csv(sanit_factors_fn)
+```
+
+
+#run this!
+```{r}
+have_geo_data <- available %>% 
+  filter(FileType == "Geographic Data") #%>% 
+  #distinct(DHS_CountryCode) %>% 
+  #pull(DHS_CountryCode)
+countries_data_new <- countries_data_new %>% 
+  filter(data %in% have_geo_data)
+
+for (i in 1:nrow(countries_data_new)) {
+  
+  country <- countries_data_new$DHS_CountryCode[i]
+  
+  survey_id <- countries_data_new$data[i]
+  
+  country_name <- datasets %>% 
+    filter(DHS_CountryCode == country) %>% 
+    distinct(CountryName) %>% 
+    pull(CountryName)
+  
+  file_name <- datasets %>% 
+    filter(FileType == "Household Member Recode" & SurveyId == survey_id) %>% 
+    pull(FileName) %>% get_datasets()
+  
+  geo_name <- datasets %>% 
+    filter(FileType == "Geographic Data" & SurveyId == survey_id) %>% 
+    pull(FileName) %>% get_datasets()
+  
+  household_data <- readRDS(file_name[[1]]) %>% 
+    dplyr::select(1:10, "hv025", "hv205") 
+  
+  geo_data <- readRDS(geo_name[[1]])@data# %>% 
+    dplyr::select(
+      "DHSCLUST",
+      "URBAN_RURA",
+      "LATNUM",
+      "LONGNUM"
+    ) %>% 
+    mutate(DHSCLUST = as.integer(DHSCLUST)) 
+  
+  our_sanits <- sanfac %>% 
+    filter(country == country_name) %>% 
+    dplyr::select(15:23) %>% 
+    pivot_longer(everything(), names_to = "name", values_to = "value") %>% 
+    mutate(URBAN_RURA = case_when(
+      str_detect(name, "^rural") ~ "R",
+      str_detect(name, "^urban") ~ "U",
+      str_detect(name, "^national") ~ "Nat"
+    ),
+      sf_type = str_extract(name, "....$")
+    ) %>% 
+    dplyr::select(-name) %>% 
+    pivot_wider(id_cols = -sf_type, names_from = sf_type)
+  
+  
+  
+  national_level <- household_data %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(geo_data) %>% 
+  summarise(sanfac_from_DHS = mean(input_score)) %>% 
+  mutate(URBAN_RURA = "Nat")
+urb_rural_level <- household_data %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(geo_data) %>% 
+  group_by(URBAN_RURA) %>% 
+  summarise(sanfac_from_DHS = mean(input_score)) %>% 
+  bind_rows(national_level) %>% 
+  left_join(our_sanits) %>% 
+  pivot_longer(-URBAN_RURA, names_to = "source", values_to = "sanitation_factor") %>% 
+  mutate(country = country_name)
+  
+  
+assign(paste0("final_df_", country_name), urb_rural_level)
+}
+ggplot(urb_rural_level, aes(x = source, y = sanitation_factor)) +
+  geom_col() +
+  facet_wrap(~URBAN_RURA)
+```
+
+# do not run this
+```{r}
+
+blank <- tribble(~country,         
+                ~URBAN_RURA,      
+                ~sanfac_from_DHS, 
+                ~DHS_sd,          
+                ~sf_h)
+
+final_df <- blank
+
+for(i in 41:length(downloads)){
+  
+  this_data <- downloads[[i]]
+  
+  this_geo_data <- geo_downloads[[i]]
+  
+  country <- country_list$DHS_CountryCode[i]
+  
+  #this_iso3
+  
+  country_name <- datasets %>% 
+    filter(DHS_CountryCode == country) %>% 
+    distinct(CountryName) %>% 
+    pull(CountryName)
+
+  
+  household_data <- readRDS(this_data) %>% 
+    dplyr::select(1:10, "hv025", "hv205") 
+  
+  
+  geo_data <- readRDS(this_geo_data)@data %>% 
+    dplyr::select(
+      "DHSCLUST",
+      "URBAN_RURA",
+      "LATNUM",
+      "LONGNUM"
+    ) %>% 
+    mutate(DHSCLUST = as.integer(DHSCLUST)) 
+  
+  
+  
+  our_sanits <- sanfac %>% 
+    filter(country == country_name) %>% 
+    dplyr::select(15:23) %>% 
+    pivot_longer(everything(), names_to = "name", values_to = "value") %>% 
+    mutate(URBAN_RURA = case_when(
+      str_detect(name, "^rural") ~ "R",
+      str_detect(name, "^urban") ~ "U",
+      str_detect(name, "^national") ~ "Nat"
+    ),
+      sf_type = str_extract(name, "....$")
+    ) %>% 
+    dplyr::select(-name) %>% 
+    pivot_wider(id_cols = -sf_type, names_from = sf_type) %>% 
+    dplyr::select(URBAN_RURA, sf_h)
+  
+  
+  national_level <- household_data %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(geo_data) %>% 
+  summarise(sanfac_from_DHS = mean(input_score),
+            DHS_sd = sd(input_score)) %>% 
+  mutate(URBAN_RURA = "Nat")
+  
+  urb_rural_level <- household_data %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(geo_data) %>% 
+  group_by(URBAN_RURA) %>% 
+  summarise(sanfac_from_DHS = mean(input_score),
+            DHS_sd = sd(input_score)) %>% 
+  bind_rows(national_level) %>% 
+  left_join(our_sanits) %>% 
+  #pivot_longer(-URBAN_RURA, names_to = "source", values_to = "sanitation_factor") %>% 
+  mutate(country = country_name) %>% 
+    dplyr::select(country, everything())
+  
+  #assign(paste0("final_df_", country_name), urb_rural_level)
+  
+  
+  final_df <- final_df %>% 
+    bind_rows(urb_rural_level)
+
+  
+}
+
+```
+
+

@@ -1,0 +1,314 @@
+---
+title: "World Vector Choice"
+author: "Jared Kibele"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = TRUE
+)
+library(tidyverse)
+data_dir <- "/home/shares/ohi/git-annex/land-based/wastewater"
+san_dat <- file.path(data_dir, "JMP_2017_WLD.xlsx")
+```
+
+I need to figure out which country dataset is better for joining up with sanitation data and the population data. The contestants are `regions_2017_update` and `gadm`. There are two main considerations:
+
+1. Number of Country codes consistent with the sanitation data
+2. Spatial overlap with population raster
+
+
+```{r sanit_data, include=FALSE}
+options(knitr.kable.NA = '--')
+# Read the relevant parts of the spreadsheet
+sanit_all <- readxl::read_excel(san_dat, 
+                            sheet="Sanitation",
+                            range=readxl::cell_limits(c(3,1), c(NA,33)),
+                            na = "-"
+                            )
+# Prepare to rename the sanitation categories with coding friendly
+# single word versions of the categories
+nm_old <- colnames(sanit_all)[6:9]
+nm_new <- c(
+  "Basic",
+  "Limited",
+  "Unimproved",
+  "Open"
+)
+
+# Code in fudge factors for categories (just making these up for now)
+ff_cat <- list(
+  Basic = 0.3,
+  Limited = 0.5,
+  Unimproved = 0.8,
+  Open = 1.0
+)
+
+# Filter to just 2015 and rename categories
+sanit <- sanit_all %>% 
+  filter(Year == 2015) %>% 
+  rename_at(vars(nm_old), ~ nm_new) %>% 
+  mutate(ff = Basic * 0.01 * ff_cat[['Basic']] +
+              Limited * 0.01 * ff_cat[['Limited']] +
+              Unimproved * 0.01 * ff_cat[['Unimproved']] +
+              Open * 0.01 * ff_cat[['Open']]
+           )
+
+# Find out how many country codes
+n_countries <- sanit %>% 
+  pull(ISO3) %>% 
+  n_distinct()
+```
+
+
+## Country Codes
+
+There are `r n_countries` in the sanitation data. I want to know how many of those countries are NOT represented in each of the vector candidates.
+
+### Regions
+
+a.k.a. `regions_2017_update`.
+
+```{r regions_missing, echo=FALSE}
+reg_fn <- file.path(data_dir, "regions_2017_update/regions_2017_update.shp")
+regions <- sf::read_sf(reg_fn)
+
+scroll_disp <- function(dat, title=NA) {
+  ootpoot <- dat %>% 
+    kableExtra::kable(digits = 2, caption = title) %>% 
+    kableExtra::kable_styling(
+      bootstrap_options = c("striped", "hover")
+    ) %>% 
+    kableExtra::scroll_box(width = "100%", height = "400px")
+  return(ootpoot)
+}
+
+s_not_r <- sanit %>% 
+  as_tibble() %>% 
+  filter(!(sanit$ISO3 %in% regions$rgn_key)) %>% 
+  select(c("COUNTRY, AREA OR TERRITORY", "ISO3")) 
+
+s_not_r %>% 
+  scroll_disp(sprintf("%i Countries in Sanitation but not in Regions", base::nrow(s_not_r)))
+```
+
+### GADM
+
+```{r gadm_missing, cache=TRUE}
+gadm_fn <-  file.path(data_dir, "gadm36_shp/gadm36.shp")
+gadm <- sf::read_sf(gadm_fn)
+
+gadm_df <- gadm %>% 
+  as_tibble() %>% 
+  select(NAME_0, GID_0) %>% 
+  distinct(NAME_0, GID_0)
+
+s_not_g <- sanit %>% 
+  as_tibble() %>% 
+  filter(!(sanit$ISO3 %in% gadm_df$GID_0)) %>% 
+  select(c("COUNTRY, AREA OR TERRITORY", "ISO3"))
+
+s_not_g %>% 
+  scroll_disp(sprintf("%i Countries in Sanitation but not in GADM", base::nrow(s_not_g)))
+
+
+```
+
+So far, the GADM is looking more promising, but now it's time to look at...
+
+## Spatial Overlap
+
+1. Starting with the population raster, I'll make a raster with the value 2 in every pixel where population density is > 0 and the value 0 elsewhere.
+2. I'll filter the vector layers to include only the polygons with a country code contained in the sanitation data.
+2. I'll make a raster from each of my vector layers (GADM and Regions) with 1s where there's a polygon and 0s where there's not.
+3. Then I'll add the pop based raster to each of the vector derived raster. Values of 3 will represent overlap, 1 will represent vector areas with no population, and 2s will represent population data without overlapping vector (in other words, population data that we can't link to sanitation data).
+
+### Checking Raster Resolution and Extent
+
+I want to make sure all my rasters have matching resolutions and extents. Since the population dataset is the only raster I'm starting with, I'll use the resolution and extents from that layer. I'll use the [`gdalinfo`](https://www.gdal.org/gdalinfo.html) command line tool to report the extents and pixel size.
+
+```{r inspect_pop_raster, echo=FALSE}
+pop_fn <- file.path(data_dir, "d2019/gpw-v4-population-density-adjusted-to-2015-unwpp-country-totals-rev10_2015_30_sec_tif/gpw_v4_population_density_adjusted_to_2015_unwpp_country_totals_rev10_2015_30_sec.tif")
+reg_fn <- file.path(data_dir, "regions_2017_update/regions_2017_update.shp")
+gadm_fn <-  file.path(data_dir, "gadm36_shp/gadm36.shp")
+
+# For later use in bash chunks
+Sys.setenv(POP_FN=pop_fn, REG_FN=reg_fn, GADM_FN=gadm_fn)
+
+# Check the resolution of the population raster
+cmd <- paste("gdalinfo", pop_fn, "| grep -E 'Pixel Size|Upper|Lower'")
+system(cmd)
+```
+
+### Simplified Population Raster
+
+Create a raster with 2 in any cell with population density > 0, and 0 in all other cells. The setup is in R, but I'll run the GDAL commands in a bash code block. I find these kinds of operations run far faster without the wrapper.
+
+```{r build_rasters_setup}
+# Get a vector of countries in the sanitation data
+sanit_codes <- sanit %>%  
+  distinct(ISO3) %>% 
+  na.omit() %>% 
+  paste0(collapse = ",") %>% 
+  stringr::str_replace("c","") %>% 
+  stringr::str_replace_all("\"", "\'")
+
+reg_sql <- paste("SELECT * FROM regions_2017_update WHERE rgn_key IN", sanit_codes)
+gadm_sql <- paste("SELECT * FROM gadm36 WHERE GID_0 IN", sanit_codes)
+
+# Make file paths for our outputs
+pop2_fn <- file.path(data_dir, "pop2.tif")
+reg_exists_fn <- file.path(data_dir, "reg_exists.tif")
+gadm_exists_fn <- file.path(data_dir, "gadm_exists.tif")
+reg_calc_fn <- file.path(data_dir, "reg_overlap.tif")
+gadm_calc_fn <- file.path(data_dir, "gadm_overlap.tif")
+
+# Set env for later use in bash chunk
+Sys.setenv(POP_FN=pop_fn,
+           POP2_FN=pop2_fn, 
+           REG_EXISTS_FN=reg_exists_fn, 
+           GADM_EXISTS_FN=gadm_exists_fn,
+           REG_CALC_FN=reg_calc_fn,
+           GADM_CALC_FN=gadm_calc_fn,
+           REG_SQL=reg_sql,
+           GADM_SQL=gadm_sql)
+```
+
+```{bash pop2_raster, eval=FALSE, echo=TRUE}
+gdal_calc.py --overwrite --NoDataValue=0 -A $POP_FN --outfile=pop2_temp.tif --type=Byte --calc="2*(A>0)"
+gdal_translate -a_nodata none -ot Byte pop2_temp.tif $POP2_FN
+rm pop2_temp.tif
+```
+
+
+### Rasterize the Regions and Calculate
+
+Check the projection of the regions shapefile:
+
+```{bash region_info}
+ogrinfo -al -so $REG_FN
+```
+ 
+ I want to keep everything in WGS84 (the projection of the population data) for now. So I'll use OGR to reproject. Then I'll subset and rasterize the reprojected vector layer.
+ 
+```{bash raterize_regions, eval=FALSE, echo=TRUE}
+ogr2ogr -overwrite -sql "$REG_SQL" -t_srs EPSG:4326 regions_4326.shp $REG_FN # destination before source, for some reason
+rm $REG_EXISTS_FN # Because rasterize doesn't have an overwrite option
+gdal_rasterize -init 0 -at -burn 1 -tr 0.008333333333334 0.008333333333334 \
+-te -180 -60 180 85 -ot Byte regions_4326.shp $REG_EXISTS_FN
+#rm regions_4326.shp
+```
+
+ 
+ 
+
+
+
+ 
+ Now do the band calc.
+ 
+```{bash calc_regions, eval=FALSE, echo=TRUE}
+gdal_calc.py --overwrite -A $REG_EXISTS_FN -B $POP2_FN --outfile=$REG_CALC_FN --type=Byte --calc="A+B"
+```
+
+Now rasterize and calculate for the GADM.
+
+```{bash rasterize_gadm, eval=FALSE, echo=TRUE}
+rm $GADM_EXISTS_FN
+gdal_rasterize -init 0 -sql "$GADM_SQL" -at -burn 1 -tr 0.008333333333334 0.008333333333334 \
+-te -180 -60 180 85 -ot Byte $GADM_FN $GADM_EXISTS_FN
+```
+```{bash gadm_calc, eval=FALSE, echo=TRUE}
+gdal_calc.py --overwrite -A $GADM_EXISTS_FN -B $POP2_FN --outfile=$GADM_CALC_FN --type=Byte --calc="A+B"
+```
+ 
+### Results 
+
+First we'll look at the GADM results and then at the Regions results.
+
+```{r gadm_crop, include=FALSE}
+library(raster)
+library(leaflet)
+pnw_extent <- extent(-127, -120, 46.8, 51)
+carib_extent <- extent(-93, -51, 2, 28)
+gadm_calc <- raster(gadm_calc_fn)
+gadm_crop <- gadm_calc %>% crop(carib_extent, snap='in')
+
+calc_colors <- c("#86b1c8", "#0039d6", "#be0026", "#04b038")
+color_labels <- c("No pop, no vector",
+                  "Vector, no pop",
+                  "Pop, no vector",
+                  "Overlap")
+
+gadm_bad_pixels <- sum(raster::getValues(gadm_calc) == 2)
+```
+
+#### GADM Results
+
+The GADM ended up leaving `r format(gadm_bad_pixels, big.mark=",")` that had no vector overlap. I'll display the whole raster.
+
+```{r plot_gadm_calc, echo=FALSE}
+gadm_calc %>% 
+  as.factor() %>% 
+  plot(col=calc_colors)
+```
+
+And here's a leaflet map of a cropped version so you can zoom in and see some areas where pixels are getting left out. (without converting the raster to tiles, there's a limit on how big of an image I can use in leaflet)
+
+```{r gadm_crop_leaflet, echo=FALSE}
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addRasterImage(gadm_crop %>% as.factor(), 
+                 colors=c("#86b1c8", "#0039d6", "#be0026", "#04b038")) %>% 
+  addLegend(colors=c("#86b1c8", "#0039d6", "#be0026", "#04b038"),
+            labels = color_labels)
+```
+
+### Regions Results
+
+```{r reg_crop, echo=FALSE}
+reg_calc <- raster(reg_calc_fn)
+reg_crop <- reg_calc %>% crop(carib_extent, snap='in')
+
+reg_bad_pixels <- sum(raster::getValues(reg_calc) == 2)
+```
+
+Using the Regions (`regions_2017_update`), left us with `r format(reg_bad_pixels, big.mark=",")` pixels of population uaccounted for. Here's the whole raster.
+
+```{r plot_reg_calc, echo=FALSE}
+reg_calc %>% 
+  as.factor() %>% 
+  plot(col=calc_colors)
+```
+
+Here's a slippy map of the same geographic subset.
+
+```{r reg_crop_leaflet, echo=FALSE}
+reg_calc <- raster(reg_calc_fn)
+reg_crop <- reg_calc %>% crop(carib_extent, snap='in')
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addRasterImage(reg_crop %>% as.factor(), 
+                 colors=c("#86b1c8", "#0039d6", "#be0026", "#04b038")) %>% 
+  addLegend(colors=c("#86b1c8", "#0039d6", "#be0026", "#04b038"),
+            labels = color_labels)
+```
+
+## So, What to Do?
+
+I'm going to look at combining GADM with EEZs from here:
+
+> Flanders Marine Institute (2018). Maritime Boundaries Geodatabase: Maritime Boundaries and Exclusive Economic Zones (200NM), version 10. Available online at http://www.marineregions.org/ https://doi.org/10.14284/312
+
+The primary advantage of the GADM over the Regions is that there's only 1 (as opposed to 20) country code missing from the GADM. The downside of the GADM is that it doesn't pick up some of the offshore areas. ...and that it misses a few pixels right on the coast. Hopefully, adding in the EEZs will fix most of that problem. Any pixels still missing should be able to be filled with nearest neighbor interpolation.
+
+This approach will also have the advantage of being based on 2 authoritative data sets that undergo regular revsions. Hopefully, all the preparation steps can be scripted so that, as new versions of the underlying data sets are released, the scripts can be re-run to generate an updated vector layer.
+
+I'll do the vector prep in a different file: [`world_vector_prep.Rmd`](world_vector_prep.html).

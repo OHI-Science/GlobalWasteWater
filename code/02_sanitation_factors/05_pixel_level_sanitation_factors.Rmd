@@ -1,0 +1,137 @@
+---
+title: "Pixel-level sanitation factors"
+author: "last run by: `r Sys.info()['user']`"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "1_sanfact")) })
+---
+
+```{r setup, include=FALSE, message = FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(here)
+  library(raster)
+  library(fasterize)
+  library(sf)
+  library(tidyverse)
+})
+
+# set file paths
+source(here("code", "file_names.R"))
+```
+
+Sanitation factors were calculated at the country level (for rural and urban) by Gordon [here](). Here, we'll take those values and assign them to 1km pixels to obtain a gridded version of country-level sanitation factors dat account for urban / rural characteristics, as well as rivers. That gridded version can then be multiplied times population density (at the pixel level) total effluent FIO effluent.
+
+Each country has two values of sanitation factors. One value is for urban, and another value is for rural, as seen here:
+
+```{r sanitation_factors}
+sanit <- read.csv(sanit_factors_impute_fn,
+                  stringsAsFactors = F) %>% 
+  select(ISO3, contains("_sf"), imputed_ml, imputed_r)
+
+sanit
+```
+
+We can look at these values on a map
+
+```{r spatial_sf}
+world_vector_sf <- st_read(world_vector_fn) %>% 
+  left_join(sanit)
+
+
+plot(world_vector_sf[, "urban_sf"], main = "If all was urban")
+plot(world_vector_sf[, "rural_sf"], main = "If all was rural")
+plot(world_vector_sf[, "imputed_ml"], main = "Imputed values")
+```
+
+Cascade has provided a raster that classifies population into urban and rural. It looks like this:
+
+```{r rural_urban_raster}
+rural_urban_input <- raster(rural_urban_binary_fn)
+# Codes: -200 = NaN, 10 = Water, 111 = Rural, 222 = Urban
+rec <- c(-201, 11, NA, 11, 112, 0, 113, 223, 1)
+recmat <- matrix(rec, ncol = 3, byrow = T)
+
+rural_urban_input <- reclassify(x = rural_urban_input,
+                                rcl = recmat)
+```
+
+```{r river inpunt}
+river <- raster(riv_15s_coastlines_fn) #load river raster
+```
+
+
+The goal is then to take the country-level sf in the first figure, and assign each pixel in the second with the appropriate sf value. First, let's rasterize the countries using the sf values.
+
+## Rasterize
+
+Now that the fudge factors are attributed to polygons, we'll rasterize them.
+
+```{r rasterize}
+sf_raster_urban <- fasterize(sf = world_vector_sf,
+                             raster = rural_urban_input,
+                             field = "urban_sf")
+
+sf_raster_rural <- fasterize(sf = world_vector_sf,
+                             raster = rural_urban_input,
+                             field = "rural_sf")
+
+sf_raster_urban_septic <- fasterize(sf = world_vector_sf,
+                             raster = rural_urban_input,
+                             field = "urban_sf_septic")
+
+sf_raster_rural_septic <- fasterize(sf = world_vector_sf,
+                             raster = rural_urban_input,
+                             field = "rural_sf_septic")
+```
+
+```{r combine}
+sf_raster_rural_urban <- sf_raster_urban
+sf_raster_rural_urban[rural_urban_input == 0] <- sf_raster_rural[rural_urban_input == 0]
+```
+
+
+```{r visualize}
+plot(sf_raster_rural_urban, main = "FIO values for urban / rural populations")
+```
+
+```{r combine septic}
+sf_raster_rural_urban_septic <- sf_raster_urban_septic
+sf_raster_rural_urban_septic[rural_urban_input == 0] <- sf_raster_rural_septic[rural_urban_input == 0]
+```
+
+```{r combine rivers}
+sf_raster_rural_urban[river == 0] <- sf_raster_rural_urban_septic[river == 0]
+```
+
+```{r visualize again}
+plot(sf_raster_rural_urban, main = "SF values for urban/rural populations, accounting for rivers")
+```
+
+
+```{r export}
+file.remove(sf_raster_rural_urban_fn)
+writeRaster(x = sf_raster_rural_urban,
+            filename = sf_raster_rural_urban_fn)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

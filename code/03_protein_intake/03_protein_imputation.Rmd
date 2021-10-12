@@ -1,0 +1,210 @@
+---
+title: "Rasterize national caloric data"
+author: "last run by: `r Sys.info()['user']`"
+date: "`r Sys.Date()`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "2_protein_intake")) })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r}
+suppressPackageStartupMessages({
+  library(here)
+  library(startR)
+  library(cowplot)
+  library(stargazer)
+  library(tidyverse)
+})
+
+source(here("code", "file_names.R"))
+```
+
+# Load data
+
+```{r}
+protein_gdp <- read.csv(protein_gdp_fn, stringsAsFactors = F) %>% 
+  select(ISO3, protein_g_cap_year, pc_gdp = NY.GDP.PCAP.CD) %>% 
+  mutate(log_pc_gdp = log10(pc_gdp)) %>% 
+  mutate(name = countrycode::countrycode(ISO3, "iso3c", "country.name"),
+         region = countrycode::countrycode(ISO3, "iso3c", "region")) 
+```
+
+
+# Identify missing values
+
+The first step is to identify which values are missing. Our target is the `world_vector_sf` file (already contained in these data), which has all the political boundaries we care about. The table below shows the countries for which we don't have annual per capita protein consumption but do have gdp (we can model this), as well as the ones for which we have none of them.
+
+```{r}
+protein_gdp %>% 
+  filter(is.na(protein_g_cap_year)) %>% 
+  mutate(id = rownames(.)) %>% 
+  knitr::kable()
+```
+
+
+
+# Impute missing values
+
+The table above shows that there are 87 locations for which we dont have protein consumption data. At the same time, there are 51 locations for which we don't have GDP. For the cases where we have GDP data, we'll use the relationship between GDP and protein consumption (this is well-established). For the ones where we don't have GDP data, we'll calculate the median for each geopolitical region, and use this value in the corresponding location.
+
+From previous work, we know that as people's income increases, so does their protein consumption (Tilman's work, for example). Let's look at the relationship between per-capita GDP and protein consumption in our dataset.
+
+```{r}
+ggplot(data = protein_gdp,
+       mapping = aes(x = log_pc_gdp, y = protein_g_cap_year)) +
+  geom_point() +
+  ggtheme_plot() +
+  geom_smooth(method = "lm")
+```
+
+
+## Modeled
+
+The figure above clearly shows the known relationship. Let's do a quick balance check to see where along the GDP range our missing values lie.
+
+
+```{r}
+protein_gdp %>% 
+  mutate(missing = is.na(protein_g_cap_year)) %>% 
+  ggplot(aes(x = log_pc_gdp, fill = missing)) +
+  geom_density(alpha = 0.5) +
+  scale_fill_brewer(palette = "Set1")+
+  ggtheme_plot()
+```
+
+Let's now fit a model (the blue line) and use it to predict on the missing ones. There shuld be 186 observations removed due to missingness.
+
+```{r, results = "asis"}
+prot_gdp_model <- lm(protein_g_cap_year ~ log_pc_gdp, data = protein_gdp)
+
+stargazer(prot_gdp_model,
+          type = "html",
+          out = here("results", "tab", "supp_protein_intake_imputation_model.html"),
+          single.row = T)
+```
+
+```{r}
+national_prot_imputed <- protein_gdp %>% 
+  mutate(protein_g_cap_year_imputed_m = predict(prot_gdp_model, newdata = .),
+         imputed_m = is.na(protein_g_cap_year))
+```
+
+
+### Check predictions
+
+First, a fitted vs predicted plot
+
+```{r}
+ggplot(data = national_prot_imputed,
+       mapping = aes(x = protein_g_cap_year, y = protein_g_cap_year_imputed_m)) +
+  geom_point() +
+  ggtheme_plot() +
+  coord_equal()
+```
+
+Now, one where we see the predicted values in context
+
+```{r}
+plot1 <- national_prot_imputed %>% 
+  mutate(protein_g_cap_year = ifelse(is.na(protein_g_cap_year), protein_g_cap_year_imputed_m, protein_g_cap_year)) %>% 
+  ggplot(mapping = aes(x = log_pc_gdp, y = protein_g_cap_year, fill = imputed_m)) +
+  geom_point(color = "black", shape = 21) +
+  scale_fill_brewer(name = "Model imputation", palette = "Set1") +
+  ggtheme_plot() +
+  labs(x = "log-10(Per capita GDP)", y = "Protein intake\n(grams per capita per year)") +
+  ggtitle(label =  "GDP-dependant protein intake imputation") +
+  theme(legend.justification = c(0, 1),
+        legend.position = c(0, 1))
+
+
+plot1
+```
+
+```{r}
+plot2 <- national_prot_imputed %>% 
+  mutate(protein_g_cap_year = ifelse(is.na(protein_g_cap_year), protein_g_cap_year_imputed_m, protein_g_cap_year)) %>% 
+  ggplot(mapping = aes(x = protein_g_cap_year, fill = imputed_m)) +
+  geom_density(alpha = 0.5) +
+  scale_fill_brewer(name = "Model imputation", palette = "Set1") +
+  ggtheme_plot() +
+  labs(x = "Protein intake (grams per capita per year)", y = "Density") +
+  theme(legend.justification = c(0, 1),
+        legend.position = c(0, 1))
+
+plot2
+```
+
+
+## Geopolitical regions
+
+There are still 51 points for which we don't have protein consumption data. Since we don't have GDP information for these, we'll instead impute them using geopolitical medians.
+
+```{r}
+# Start imputation
+national_prot_imputed <- national_prot_imputed %>% 
+  mutate(region = countrycode::countrycode(sourcevar = ISO3,
+                                           origin = "iso3c",
+                                           destination = "region")) %>% 
+  mutate(region = case_when(ISO3 == "ATF" ~ "Eastern Africa",
+                            ISO3 == "CCK" ~ "South-Eastern Asia",
+                            ISO3 == "CXR" ~ "South-Eastern Asia",
+                            ISO3 == "IOT" ~ "Southern Asia",
+                            T ~ region)) %>% 
+  select(ISO3, name, log_pc_gdp, region, contains("_year"), imputed_m) %>% 
+  group_by(region) %>%
+  mutate(protein_g_cap_year_imputed_r = median(protein_g_cap_year, na.rm = T)) %>% 
+  ungroup() %>% 
+  mutate(imputed_r = is.na(protein_g_cap_year_imputed_m),
+         protein_g_cap_year = ifelse(imputed_m, protein_g_cap_year_imputed_m, protein_g_cap_year),
+         protein_g_cap_year = ifelse(imputed_r, protein_g_cap_year_imputed_r, protein_g_cap_year)) %>% 
+  select(-contains("_median"))
+```
+
+```{r}
+plot3 <- national_prot_imputed %>% 
+  ggplot(mapping = aes(x = protein_g_cap_year, fill = imputed_r)) +
+  geom_density(alpha = 0.5) +
+  scale_fill_brewer(name = "Regional imputation", palette = "Set1") +
+  ggtheme_plot() +
+  labs(x = "Protein intake (grams per capita per year)", y = "Density") +
+  theme(legend.justification = c(0, 1),
+        legend.position = c(0, 1))
+
+plot3
+```
+
+```{r}
+p <- plot_grid(plot1,
+               plot_grid(plot2, plot3, ncol = 2, labels = c("B", "C")),
+               ncol = 1, labels = c("A", NA))
+
+p
+```
+
+```{r}
+lazy_ggsave(plot = p, filename = "supp_protein_intake_imputation", width = 18, 10)
+```
+
+```{r}
+national_prot_imputed %>% 
+  filter(imputed_m) %>% 
+  mutate_at(vars(protein_g_cap_year), replace_na, 0) %>% 
+  mutate(imputed_from = ifelse(imputed_r, "Geopolitical regional median", "GDP model")) %>% 
+  select(ISO3, Region = region, `Source of Imputation` = imputed_from, `Protein consumption (per capita annual grams)` = protein_g_cap_year) %T>% 
+  write.csv(here("results", "tab", "supp_protein_intake_imputation_sources.csv")) %>% 
+  knitr::kable(caption = "Imputed countries, with source of inputation.")
+```
+
+
+```{r}
+file.remove(protein_gdp_imputed_fn)
+write.csv(x = national_prot_imputed,
+          file = protein_gdp_imputed_fn,
+          row.names = F)
+```

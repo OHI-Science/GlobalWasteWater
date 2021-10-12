@@ -1,0 +1,118 @@
+---
+title: "new_maps"
+author: "Gordon Blasco"
+date: "5/14/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(sf)
+library(here)
+library(tidyverse)
+#library(rgdal)
+```
+
+# read in data
+```{r}
+source(here("code", "file_names.R"))
+
+# use ogr to extract crs
+world_ogr <- rgdal::readOGR(dsn = world_vector_fn, layer = "world_vector")
+world_crs <- rgdal::CRSargs(world_ogr@proj4string)
+
+pours_raw <- rgdal::readOGR(pour_points_original_fn)
+pours_crs <- rgdal::CRSargs(pours_raw@proj4string)
+
+#N_ogr <- rgdal::readOGR(dsn = "/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output", 
+ #                layer = "pourpoints_N_Alldata")
+#N_crs <- rgdal::CRSargs(N_ogr@proj4string)
+
+
+# read in shapes via st_read
+N_pours <- rgdal::readOGR(dsn = "/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/pourpoints_N_Alldata.shp")
+rgdal::CRSargs(N_pours@proj4string)
+vec_world <- sf::st_read(dsn = world_vector_fn, layer = "world_vector") 
+
+# set the crs and transform N_pour to the same crs as world
+```
+
+# fix crs
+```{r}
+vec_world <- sf::st_read(dsn = world_vector_fn, layer = "world_vector", crs = "ESRI:54009") 
+raw_pours <- sf::st_read(pour_points_original_fn)
+test_pours <- sf::st_read("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/pourpoints_N_Alldata.shp")
+
+test2 <- test_pours %>% 
+  filter(!(sum == 0))
+
+pour_data <- read_csv("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/pourpoints_N_Alldata.csv") %>% 
+  as_tibble() %>% 
+  select(-geometry) %>% 
+  select(basin_id, sum, effluent_open, effluent_sep, effluent_treated) 
+
+N_pours <- raw_pours %>% 
+  left_join(pour_data)
+
+eez <- vec_world %>% 
+  filter(poly_type != "GADM") %>%
+  select(ISO3)
+
+
+```
+
+
+
+```{r}
+
+
+pours_in_eez <- st_join(N_pours, eez)
+
+p_ez <- as_tibble(pours_in_eez) %>% 
+  select(-geometry) %>%  
+  group_by(ISO3) %>% 
+  summarise(
+    total_N = sum(sum), 
+    effluent_open = sum(effluent_open), 
+    effluent_sep =sum(effluent_sep), 
+    effluent_treated =sum(effluent_treated)
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    perc_open = effluent_open / total_N,
+    perc_sep = effluent_sep / total_N,
+    perc_treated = effluent_treated / total_N,
+  ) %>% 
+  filter(!is.na(ISO3))
+
+
+eez_ready <- eez %>% 
+  left_join(p_ez) %>% 
+  filter(!(is.na(total_N)))
+
+ggplot(eez_ready, aes(geometry = geometry, fill = log10(total_N)))+
+  geom_sf()
+
+```
+
+
+# reduce size
+```{r}
+eez <- vec_world %>% 
+  filter(poly_type != "GADM") %>%
+  select(ISO3)
+
+
+n_lite <- raw_pours %>% 
+  filter(row_number() %% 2 != 0 )%>% 
+  filter(row_number() %% 2 != 0 )
+
+```
+
+```{r}
+test <- read_csv("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/countries_N_Alldata.csv")
+```
+

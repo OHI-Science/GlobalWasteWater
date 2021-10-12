@@ -1,0 +1,541 @@
+---
+title: "Impute Sanitation Factors"
+author: "last run by: `r Sys.info()['user']`"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "1_sanfact")) })
+---
+
+## Set up and introduction
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(stargazer)
+  library(tidymodels)
+  library(furrr)
+  library(tidyverse)
+})
+
+source(here::here("code","file_names.R"))
+```
+
+We have calculated sanitation factors for each country in our dataset. The sanitation factors are availabel at the country-level, but also for urban and rural populations. We want to use the urban/rural ones, as these provide a more realistic representation of wastewater treatment. The problem is that, for many countries, we only observe national-level data.
+
+Here, we will impute urban- and rural-level sanitation factors for countries by predicting from their national values. The first step is to look at how crazy this is, so lets load the data and look at the relationship between national sanitation factors and urban and rural.
+
+```{r}
+# Load the data
+sanit_factors <- read.csv(sanit_factors_fn,
+                          stringsAsFactors = F)
+```
+
+```{r, fig.cap = "Relationship between rural/urban sanitation factors and national sanitation factors"}
+sanit_factors %>% 
+  filter(rural_sf > 0,
+         urban_sf > 0) %>% 
+  select(iso3, national_sf, rural_sf, urban_sf) %>% 
+  gather(variable, value, -c(iso3, national_sf)) %>% 
+  ggplot(aes(x = national_sf, y = value)) +
+  geom_point() +
+  facet_wrap(~variable) +
+  coord_equal() +
+  theme_bw()
+```
+
+Remember that $sf = 1$ implies no sanitation. With this in mind, it mkes sense that the urban sf shows a lower (cleaner) value than the national, and that the rural sf shows a higher (dirtier) value than national. Surely, other variables can explain the relationship. In this case, we will use those readily available in the detaset so as to avoid adding data from other sources. We will use population size, percent population living in urban communities, and the national-level sanitation factors.
+
+# Balance check
+
+Before we attempt to write some models, we want to make sure that the countries for which we have missing data are missing at random (or as if random), and that there isn't anything systematic drving this missingness. For example, we can look at the distribution of the variables mentioned above (the ones we intend to use as predictors).
+
+```{r}
+sanit_factors %>% 
+  mutate(group = ifelse((urban_sf > 0 | rural_sf > 0), "complete", "needs impute"),
+         log_population_thousands = log10(population_thousands)) %>% 
+  select(group, national_sf, log_population_thousands, percent_urban) %>% 
+  gather(variable, value, -group) %>% 
+  ggplot(aes(x = value, fill = group)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~variable, scales = "free", ncol = 2) +
+  theme_bw()
+```
+
+The above shows that countries in each group are a bit different. For example, countries needing imputation have smaller populations, lower national-level sanitation factors, and a greater proportion of their population living in urban environments. If we are to use these variables for prediction, we want to make sure we don't impose a lot of linear structure. Therefore, we should try linear models, as well as more flexible approximations.
+
+# Building predictive mdoels
+
+In order to determine the best model, and the best parameters (or meta-parametetrs) for each model, we must first perform cross validation. The overal workflow to aplpy these machine learning aalgorithms is as follows:
+
+1. Subset the `sanit_factors` data to keep only complete observations. That is, we'll only keep records for which we have national_sf, urban_sf, rural_sf, population_thousands, and percent_urban. These correspond to the data represented in red in the figure above.
+
+2. Split this subset into a training (70%) and testing (30%) splits. Keep the testing set under lock, no algorithm can see these data.
+
+3. We'll then usse the training split to perform v-fold cross validation for parameter tunning. I will use 5 folds to fit multiple variants of random forests and knns by varying key parameters. In the case of random forests, I will vary the number of predictors used (1:3) and the number of trees that each forest contains (10, 20, 100, 500). For knn, I will vary the number of neighbors to use (1:20).
+
+4. Cross validation only tells us which parameters make each algorithm work best. Therefore, the step above will tell me how the best random forest looks like and how the best knn looks like, but it won't tell me which of these is best. In order to find which model is best, I will train a model using the "best" parameters identified in cross validation, but this time using the ENTIRE training set. At this point, I will also include linear models. I will then use the model object to predict on the remaining 30% testing data, for which we know the truth value. I will then compare predicted vs observed and derive three measures of performance: RMSE, MSE, R2. Based on these performance metrics, I will chose the single best model.
+
+5. Once the single best model is identified, I will proceed to train a model using the entire subset of complete data (that is, training and testing combined), and use it to predict rural and urban sf where these are missing.
+
+## Set up tuning functions
+
+The first step is to build a series of helper functions. Below, I've created two tunning functions. These will be used in the parameter tunning part. Essentially, they take a combination of tuning parameters, as given by the factorial combinations, and apply it to a split of the data (that is, to a portion of the CV splits from the 70%). These functions return the mean and standard deviation of the root mean squared error.
+
+```{r}
+# Function to tune random forest
+tuning_rf <- function(mtry, trees, validation_data, formula){
+  
+  results <- furrr::future_map2_dfr(.x = validation_data$splits,
+                                    .y = validation_data$id,
+                                    ~fitting_rf(mtry = mtry,
+                                                trees = trees,
+                                                split = .x,
+                                                id = .y,
+                                                formula = formula))
+  
+  results %>%
+    group_by(id) %>%
+    rmse(truth, prediction) %>%
+    summarise(mean_rmse = mean(.estimate),
+              sd_rmse = sd(.estimate))
+}
+
+# Function to tune KNN
+tuning_knn <- function(neighbors, dist, validation_data, formula){
+  
+  results <- furrr::future_map2_dfr(.x = validation_data$splits,
+                                    .y = validation_data$id,
+                                    ~fitting_knn(neighbors = neighbors,
+                                                 dist = dist,
+                                                 split = .x, 
+                                                 id = .y,
+                                                 formula = formula))
+  
+  results %>%
+    group_by(id) %>%
+    rmse(truth, prediction) %>%
+    summarise(mean_rmse = mean(.estimate),
+              sd_rmse = sd(.estimate))
+}
+```
+
+## Create fitting functions
+
+Then I also have two fitting functions. The tunning functions above call these functions to perform the fit in each model. The actual ML process happen in these. Note that the recipe (center and scaling) is applied at the split level, not at the dataet level. This makes for more robust algorithms, and avoids overfitting or any possible spillage of "knowledge".
+
+```{r}
+# Create a random forest wrapper function
+fitting_rf <- function(formula, mtry, trees, split, id){
+  
+  # Extract the analysis split for this id
+  analysis_set <- analysis(split)
+  
+  # Prep the recipe using the analysis set
+  analysis_prep <- prep(sf_recipe(analysis_set), training = analysis_set)
+  
+  # Bake (transform) the data
+  analysis_processed <- bake(analysis_prep, new_data = analysis_set)
+  
+  # Fit the model
+  model <- rand_forest(mtry = mtry, trees = trees, mode = "regression") %>%
+    set_engine("ranger", importance = 'impurity') %>%
+    fit(formula, data = analysis_processed)
+  
+  # Extract the assessment split
+  assessment_set <- assessment(split)
+  
+  # Prep and bake (transform) the assessment split
+  assessment_prep <- prep(sf_recipe(assessment_set), testing = assessment_set)
+  assessment_processed <- bake(assessment_prep, new_data = assessment_set)
+  
+  # Return a tibble with predicted and observed within the asessment data
+  tibble::tibble("id" = id,
+                 "truth" = assessment_processed$rural_sf,
+                 "prediction" = unlist(predict(model, new_data = assessment_processed)))
+}
+
+fitting_knn <- function(formula, neighbors, dist, split, id){
+
+  # Extract the analysis split for this id
+  analysis_set <- analysis(split)
+  
+  # Prep the recipe using the analysis set
+  analysis_prep <- prep(sf_recipe(analysis_set), training = analysis_set)
+  
+  # Bake (transform) the data
+  analysis_processed <- bake(analysis_prep, new_data = analysis_set)
+
+  # Fit the model
+  model <- nearest_neighbor(mode = "regression", neighbors = neighbors, dist_power = dist) %>% 
+    set_engine("kknn") %>% 
+    fit(formula, data = analysis_processed)
+  
+  # Extract the assessment split
+  assessment_set <- assessment(split)
+  
+  # Prep and bake (transform) the assessment split
+  assessment_prep <- prep(sf_recipe(assessment_set), testing = assessment_set)
+  assessment_processed <- bake(assessment_prep, new_data = assessment_set)
+  
+  # Return a tibble with predicted and observed within the asessment data
+  tibble::tibble("id" = id,
+                 "truth" = assessment_processed$rural_sf,
+                 "prediction" = unlist(predict(model, new_data = assessment_processed)))
+}
+```
+
+
+## Data preping
+
+Let's now create a subset of data for which we have national, urban, and rural sanitation factors. We will call this the training dataset (because the models will be trained on it, and then used to predict on the missing data)
+
+```{r}
+# Create a subset of complete data
+complete <- sanit_factors %>% 
+  filter(rural_sf > 0,
+         urban_sf > 0) %>% 
+    select(percent_urban, population_thousands,
+           national_sf, rural_sf, urban_sf,
+           national_sf_septic, rural_sf_septic, urban_sf_septic)
+
+# testing and training datasets
+## Split data
+set.seed(43)
+sf_split <- initial_split(data = complete, prop = 0.7)
+## Extract each split
+### Training
+sf_train <- training(sf_split)
+### Testing
+sf_test <- testing(sf_split)
+```
+
+Then, I create a recipe function to be called in each split. In this case, I will only center and scale all the predictors.
+
+```{r}
+## Create a recipe based on the training data
+sf_recipe <- function(dataset) {
+  recipe(x = dataset, vars = c("rural_sf", "urban_sf",
+                               "rural_sf_septic", "urban_sf_septic",
+                               "percent_urban", "population_thousands",
+                               "national_sf", "national_sf_septic"),
+         roles = c("outcome", "outcome",
+                   "outcome", "outcome",
+                   "predictor", "predictor", "predictor", "predictor")) %>% 
+    step_center(all_predictors()) %>%
+    step_scale(all_predictors())
+}
+```
+
+Then, I take the training data and create the vfold object with 5 folds.
+
+```{r}
+# Cross validation for parameter tunning
+## Create a cross_validation splits
+set.seed(43)
+validation_data <- vfold_cv(sf_train, v = 5, repeats = 1)
+```
+
+We can now use the `validation_data` generated above to perform parameter tunning. The following lines of code fit a total of 12 random forests and 10 knns. The 12 random forests contain factorial combinations for mtry = (1, 2, 3), and trees = (10, 20, 50, 100). The knn is fit with a range of options for different number of neighbors.
+
+```{r}
+## RANDOM FOREST
+## CV
+formula <- as.formula("rural_sf ~ population_thousands + percent_urban + national_sf")
+
+results_rf <- expand.grid(mtry = c(1:3),
+            trees = c(10, 20, 50, 100)) %>% 
+  mutate(res = future_map2(.x = mtry,
+                           .y = trees,
+                           .f = tuning_rf,
+                           validation_data = validation_data,
+                           formula = formula)) %>% 
+  unnest()
+
+### Visualize
+ggplot(results_rf, aes(x = mtry, y = mean_rmse, group = trees, color = trees)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_rmse - sd_rmse, ymax = mean_rmse + sd_rmse)) +
+  theme_bw()
+```
+
+```{r}
+## KNN
+### CV
+results_knn <- expand.grid(neighbors = 1:10,
+                           dist = c(1, 2)) %>% 
+  as_tibble() %>% 
+  mutate(res = future_map2(.x = neighbors,
+                           .y = dist,
+                           .f = tuning_knn,
+                           validation_data = validation_data,
+                           formula = formula)) %>% 
+  unnest()
+
+### Visualize
+ggplot(results_knn, aes(x = neighbors, y = mean_rmse, color = dist)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = mean_rmse - sd_rmse, ymax = mean_rmse + sd_rmse)) +
+  theme_bw()
+```
+
+From the above figures (and inspection of model results), we can see that a random forest with mtry = 3 and 10 trees provide the best tree, while knn with 5 neighbors works the best too.
+
+The next step is to aplpy the same recipe to the entire training data (not just the vfold splits), to train a random forest and a knn using the optimal parameters from above, as well as a linear model.
+
+```{r}
+### Prep the recipe
+training_rec <- prep(sf_recipe(sf_train))
+### Bake the recipe
+train_data <- bake(training_rec, new_data = sf_train)
+
+```
+
+Now that we have the data, we can go ahead and use them to train the tunned algorithms.
+
+```{r}
+full_rf_model <- rand_forest(mtry = 3, trees = 10, mode = "regression") %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  fit(formula, data = train_data)
+
+full_knn_model <- nearest_neighbor(mode = "regression", neighbors = 6, dist_power = 1) %>% 
+  set_engine("kknn") %>% 
+  fit(formula, data = train_data)
+
+full_lm_model <- linear_reg() %>% 
+  set_engine("lm") %>% 
+  fit(formula, data = train_data)
+```
+
+We then take each of these, and calculate their performance using three performance metrics. For that, I first create a wrapper function.
+
+```{r}
+metrics_wrap <- function(model_object, new_data) {
+ model_object %>%
+    predict(new_data) %>%
+    bind_cols(new_data) %>% 
+    metrics(truth = rural_sf, estimate = .pred) %>%
+    select(-.estimator)
+}
+```
+
+
+We can then apply that wrapper function on the entire data. First, we'll prep and apply our recipte to the testing data, which has not been used up until this time. We then use the model objects from above to predict rural_sf, and compare predicted to observed to derive three measures of performance.
+
+```{r}
+# Calculate parameters for the testing set
+test_rec <- sf_test %>% 
+  prep(sf_recipe(.), testing = .)
+
+# Apply parameters to obtain a final testing set
+data_test <- bake(test_rec, new_data = sf_test)
+
+tibble(model = c("rf", "knn", "lm"),
+       model_object = list(full_rf_model,
+                           full_knn_model,
+                           full_lm_model)) %>% 
+  mutate(res = map(model_object, metrics_wrap, new_data = data_test)) %>% 
+  unnest(res) %>% 
+  ggplot(aes(x = model, y = .estimate)) +
+  geom_col(color = "black", fill = "steelblue") +
+  facet_wrap(~.metric, scales = "free_y") +
+  theme_minimal() +
+  labs(x = "Model", y = "Estiamte")
+```
+
+
+# Fitting final model
+
+The above evaluation shows that random forests have the lowest mean average error, lowest root-mean square error, and the highest out-of-sample R squared. Therefore, we will now train a model using all the complete data, and then use it to impute rural for the missing values.
+
+```{r}
+### Prep the recipe
+complete_rec <- prep(sf_recipe(complete))
+### Bake the recipe
+complete_data <- bake(complete_rec, new_data = complete)
+
+## Generate models for:
+# Imputation of low values
+rf_rural <- rand_forest(mtry = 3, trees = 10, mode = "regression") %>% 
+  set_engine("ranger", seed = 43) %>% 
+  fit(rural_sf ~ population_thousands + percent_urban + national_sf, data = complete_data)
+
+rf_rural_septic <- rand_forest(mtry = 3, trees = 10, mode = "regression") %>% 
+  set_engine("ranger", seed = 43) %>% 
+  fit(rural_sf_septic ~ population_thousands + percent_urban + national_sf_septic, data = complete_data)
+
+rf_urban <- rand_forest(mtry = 3, trees = 10, mode = "regression") %>% 
+  set_engine("ranger", seed = 43) %>% 
+  fit(urban_sf ~ population_thousands + percent_urban + national_sf, data = complete_data)
+
+rf_urban_septic <- rand_forest(mtry = 3, trees = 10, mode = "regression") %>% 
+  set_engine("ranger", seed = 43) %>% 
+  fit(urban_sf_septic ~ population_thousands + percent_urban + national_sf_septic, data = complete_data)
+
+
+```
+
+Now we perform the imputation by taking the models above and feeding them the incomplete data.
+
+```{r}
+### Prep the recipe
+to_complete_rec <- prep(sf_recipe(sanit_factors))
+### Bake the recipe
+to_complete_data <- bake(to_complete_rec, new_data = sanit_factors)
+
+sanit_factors_imputed <- sanit_factors %>% 
+  mutate(rural_sf2 = predict(rf_rural, new_data = to_complete_data)$.pred,
+         urban_sf2 = predict(rf_urban, new_data = to_complete_data)$.pred,
+         imputed_ml = (urban_sf == 0 & rural_sf == 0),
+         rural_sf2_septic = predict(rf_rural_septic, new_data = to_complete_data)$.pred,
+         urban_sf2_septic = predict(rf_urban_septic, new_data = to_complete_data)$.pred,
+         imputed_ml_septic = (urban_sf_septic == 0 & rural_sf_septic == 0),
+         rural_sf = ifelse(rural_sf == 0, rural_sf2, rural_sf),
+         urban_sf = ifelse(urban_sf == 0, urban_sf2, urban_sf),
+         rural_sf_septic = ifelse(rural_sf_septic == 0, rural_sf2_septic, rural_sf_septic),
+         urban_sf_septic = ifelse(urban_sf_septic == 0, urban_sf2_septic, urban_sf_septic)) %>% 
+  select(-contains("2"))
+
+sanit_factors_imputed %>% 
+  select(national_sf, urban_sf, rural_sf, imputed_ml) %>% 
+  gather(class, value, -c(national_sf, imputed_ml)) %>% 
+  ggplot(aes(x = national_sf, y = value, color = imputed_ml)) +
+  geom_point() +
+  facet_wrap(~class) +
+  theme_bw() +
+  scale_color_brewer(palette = "Set1") +
+  coord_equal() +
+  ggtitle("ML imputation")
+
+sanit_factors_imputed %>% 
+  select(national_sf_septic, urban_sf_septic, rural_sf_septic, imputed_ml) %>% 
+  gather(class, value, -c(national_sf_septic, imputed_ml)) %>% 
+  ggplot(aes(x = national_sf_septic, y = value, color = imputed_ml)) +
+  geom_point() +
+  facet_wrap(~class) +
+  theme_bw() +
+  scale_color_brewer(palette = "Set1") +
+  coord_equal() +
+  ggtitle("ML imputation",
+          subtitle = "Excluding septic and open for rivers")
+
+```
+
+# Imputation 2
+
+The imputation above allowed us to convert national-level sf to urban / rural sanitation factors. However, there are a couple of locations for which we have no information, and where the predictive models won't work.
+
+
+```{r}
+# Read in the world vector data, our ultimate target
+world_vector_sf <- sf::st_read(world_vector_fn) %>% 
+  sf::st_set_geometry(NULL) %>% 
+  left_join(sanit_factors_imputed, by = c("ISO3" = "iso3"))
+
+# Which ones are missing?
+world_vector_sf %>% 
+  filter(is.na(rural_sf)) %>% 
+  group_by(ISO3) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(name = countrycode::countrycode(ISO3, "iso3c", "country.name"),
+         region = countrycode::countrycode(ISO3, "iso3c", "region")) %>% 
+  select(-n) %>% 
+  knitr::kable()
+```
+
+As stated by the warning message above, the region for some of these places could not be determined. However, we can manually do it. The ones we will modify are ATF, CCK, CXR, and IOT, as seen below. In the follwoing chunk, we create the "region" variable, and use it to group our data to calculate region-level medians for each rural / urban / national factors. We then use the median to replace the missing values.
+
+```{r}
+# Start imputation
+sanit_factors_imputed <- world_vector_sf %>% 
+  mutate(region = countrycode::countrycode(sourcevar = ISO3,
+                                           origin = "iso3c",
+                                           destination = "region")) %>% 
+  mutate(region = case_when(ISO3 == "ATF" ~ "Eastern Africa",
+                            ISO3 == "CCK" ~ "South-Eastern Asia",
+                            ISO3 == "CXR" ~ "South-Eastern Asia",
+                            ISO3 == "IOT" ~ "Southern Asia",
+                            T ~ region)) %>% 
+  select(ISO3, country, region, population_thousands, contains("sf"), imputed_ml) %>% 
+  group_by(region) %>%
+  mutate(rural_sf_median = median(rural_sf, na.rm = T),
+         urban_sf_median = median(urban_sf, na.rm = T),
+         national_sf_median = median(national_sf, na.rm = T),
+         rural_sf_septic_median = median(rural_sf_septic, na.rm = T),
+         urban_sf_septic_median = median(urban_sf_septic, na.rm = T),
+         national_sf_septic_median = median(national_sf_septic, na.rm = T)) %>% 
+  ungroup() %>% 
+  mutate(imputed_ml = ifelse(is.na(imputed_ml), F, imputed_ml),
+         imputed_r = is.na(rural_sf),
+         rural_sf = ifelse(imputed_r, rural_sf_median, rural_sf),
+         urban_sf = ifelse(imputed_r, urban_sf_median, urban_sf),
+         national_sf = ifelse(imputed_r, national_sf_median, national_sf),
+         rural_sf_septic = ifelse(imputed_r, rural_sf_septic_median, rural_sf_septic),
+         urban_sf_septic = ifelse(imputed_r, urban_sf_septic_median, urban_sf_septic),
+         national_sf_septic = ifelse(imputed_r, national_sf_septic_median, national_sf_septic)) %>% 
+  select(-contains("_median")) %>% 
+  mutate_at(vars(5:10), replace_na, 0)
+```
+
+As an example of the data, the plot below shows the known values (or those imputed through the ML process), and the imputed values.
+
+```{r}
+
+sanit_factors_imputed %>% 
+  select(rural_sf, urban_sf, national_sf, imputed_r) %>% 
+  gather(class, value, -c(national_sf, imputed_r)) %>% 
+  ggplot(aes(x = national_sf, y = value, color = imputed_r)) +
+  geom_point() +
+  facet_wrap(~class) +
+  theme_bw() +
+  scale_color_brewer(palette = "Set1") +
+  coord_equal() +
+  ggtitle("Region-level median imputation")
+
+sanit_factors_imputed %>% 
+  select(rural_sf_septic, urban_sf_septic, national_sf_septic, imputed_r) %>% 
+  gather(class, value, -c(national_sf_septic, imputed_r)) %>% 
+  ggplot(aes(x = national_sf_septic, y = value, color = imputed_r)) +
+  geom_point() +
+  facet_wrap(~class) +
+  theme_bw() +
+  scale_color_brewer(palette = "Set1") +
+  coord_equal() +
+  ggtitle("Region-level median imputation",
+          subtitle = "Excluding septic and open for rivers")
+```
+
+
+
+```{r}
+write.csv(sanit_factors_imputed,
+          file = sanit_factors_impute_fn,
+          row.names = F)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

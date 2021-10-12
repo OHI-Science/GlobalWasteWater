@@ -1,0 +1,53 @@
+---
+title: "Pour Point Processing"
+author: "Jared Kibele"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    pandoc_args: ["--output=../docs/pour_points.html"]
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(sf)
+
+source("./file_names.R")
+```
+
+## Blank File Prep
+
+The original file came from a previous analysis (as described [here](datasets.html)). It's in a Mollweide projection. I'm still working in unprojected WGS84 (to match the population raster), so I'll first reproject. Then I'll drop the fields I don't need and add a field for my effuluent density sums (initialized with zeros).
+
+```{r file_prep}
+drop_cols <- c('SUM_FERTC','SUM_PESTC', 'SUM_IMPV')
+
+glob_plume <- sf::read_sf(pour_points_original_fn) %>% 
+  sf::st_transform(4326) %>% 
+  select(-one_of(drop_cols)) 
+```
+
+## Join Watershed Effluent Values to Pour Points
+
+```{r watershed_join}
+watersheds <- sf::read_sf(effluent_watersheds_fn) %>% 
+  as_tibble() %>% 
+  select(c("basin_id", "effluent", "count", "area"))
+
+pour_points <- glob_plume %>% 
+  left_join(watersheds, by="basin_id") %>% 
+  filter(effluent > 0.0)
+
+pour_points %>% 
+  sf::write_sf(pour_points_fn,
+               layer_options = "OVERWRITE=true")
+
+pour_points %>% head()
+```
+
+Writing the shapefile produces an error message, but if I'm reading [this](https://github.com/r-spatial/sf/issues/306) correctly we're not actually losing any data. TODO: Double check that we can disregard.
+
+```{r eval=FALSE}
+# This takes forever. I don't have the patients right now so `eval=FALSE`
+ggplot(pour_points) +
+  geom_sf(aes(size=effluent))
+```

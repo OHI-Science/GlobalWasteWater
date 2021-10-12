@@ -1,0 +1,71 @@
+---
+title: "pour point figs"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(here)
+  library(raster)
+  library(fasterize)
+  library(sf)
+  library(tidyverse)
+  library(mapview)
+})
+
+source(here("code", "file_names.R"))
+
+```
+
+```{r}
+
+x <- "/home/shares/ohi/git-annex/land-based/wastewater/data/processed/pour_point_totals_all.shp"
+
+mollproj <- '+proj=moll +lon_0=150 +ellps=WGS84'
+
+pour_point <- st_read(x) %>% st_set_crs(mollproj)
+
+st_crs(pour_point, EPSG =4326)
+
+
+pour_coords <- do.call(rbind, st_geometry(pour_point)) %>% 
+    as_tibble() %>% setNames(c("lon","lat"))
+
+pour_data <- pour_point %>% bind_cols(pour_coords) 
+
+
+```
+
+```{r}
+
+points_sfc <- st_sfc(pour_point)
+
+leaflet(pour_data) %>% addTiles() %>%
+  addCircles(lng = ~lon, lat = ~lat)
+
+
+
+
+```
+
+```{r}
+
+ggplot(pour_data, aes(x = lon, y= lat)) +
+  geom_point(aes(size = effluent_1)) 
+  
+  #scale_x_continuous(limits = c(100, 10000))
+
+
+```
+
+```{r}
+ph_basemap <- get_map(location=c(lon = -75.16522, lat = 39.95258), zoom=11, maptype = 'terrain-background', source = 'stamen')
+
+
+```
+

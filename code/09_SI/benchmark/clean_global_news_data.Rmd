@@ -1,0 +1,68 @@
+---
+title: "GLOBAL NEWS2.0 benchmarking data"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    code_folding: show
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "benchmark")) })
+---
+
+
+```{r setup}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+# Load packages
+suppressPackageStartupMessages({
+  library(startR)
+  library(here)
+  library(rnaturalearth)
+  library(sf)
+  library(tidyverse)
+})
+
+source(here("code", "file_names.R"))
+```
+
+# Read, clean, and transform:
+
+```{r}
+global_news <- read.csv(global_news_fn) %>% 
+  janitor::clean_names() %>% 
+  select(id, basin_name, area_km2, lon = longitude, lat = latitude, din, don) %>% 
+  mutate(area_km2 = str_remove_all(area_km2, ","),
+         area_km2 = as.numeric(area_km2)) %>% 
+  replace_na(replace = list(din = 0, don = 0)) %>%  
+  mutate(dn = din + don,
+         dn_tot = dn * area_km2,
+         just_one = ((din == 0) * (don == 0)) == 1) %>% 
+  st_as_sf(coords = c("lon", "lat")) %>% 
+  st_set_crs("+proj=longlat +ellps=WGS84")
+```
+
+# Visualize
+
+```{r}
+coast <- ne_coastline(scale = "small", returnclass = "sf") %>% 
+  lwgeom::st_make_valid() %>% 
+  st_wrap_dateline()
+
+ggplot(data = global_news) +
+  geom_sf(data = coast) +
+  geom_sf(aes(size = dn_tot, color = just_one)) +
+  ggtheme_map()
+```
+
+
+# Export clean data
+
+```{r}
+file.remove(global_news_clean_fn)
+st_write(global_news, global_news_clean_fn)
+```
+
+

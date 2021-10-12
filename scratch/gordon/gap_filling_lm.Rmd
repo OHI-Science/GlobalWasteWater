@@ -1,0 +1,164 @@
+---
+title: "gap_filling"
+author: "Gordon Blasco"
+date: "10/24/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Gap filling
+```{r, warning =FALSE, message=FALSE}
+
+
+library(tidyverse)
+library(here)
+library(countrycode)
+library(sf)
+library(broom)
+library(WDI)
+library(caret)
+
+
+source(here("code", "file_names.R"))
+
+
+all_missings_list <- read_csv(here("scratch","gordon","missing_data.csv"))
+
+country_codes <- countrycode::codelist %>% 
+  dplyr::select(country.name.en, iso3c,
+                iso3n, iso2c 
+                ) %>% 
+  rename(ISO3 = iso3c)
+
+sanit <- read.csv(sanit_factors_fn,
+                  stringsAsFactors = F) %>% 
+  dplyr::select(iso3, rural_sf, urban_sf)
+
+world_vector_sf <- st_read(world_vector_fn) %>% 
+  left_join(sanit, by = c("ISO3" = "iso3"))
+
+
+WDI_list <- WDIcache()
+wdi_names <- WDI_list[["series"]]
+
+```
+
+
+
+## load in gdp world bank country indicators
+```{r message=FALSE}
+wdi_indicators <- WDI(indicator=c('NY.GDP.PCAP.KD', '1.1_ACCESS.ELECTRICITY.TOT'), country= "all", start=2015, end=2015) %>% 
+  rename(gdp_per_cap = NY.GDP.PCAP.KD,
+         access_electricity = `1.1_ACCESS.ELECTRICITY.TOT`) %>% #ended up not using this
+  left_join(country_codes) %>% 
+  dplyr::select(-year, -country, -iso2c, -country.name.en, -iso3n) %>% 
+  rename(iso3 = ISO3)
+
+missings <- as.data.frame(world_vector_sf) %>% 
+  dplyr::select(ISO3, rural_sf, urban_sf)  %>% 
+  left_join(country_codes) %>% 
+  distinct(ISO3, .keep_all = TRUE) %>% 
+  left_join(wdi_indicators, by = c("ISO3" = "iso3"))
+
+ggplot(missings, aes(x=log(gdp_per_cap), y = rural_sf))+
+  geom_point()
+
+
+```
+
+## Build a training set with all data that does exist.
+```{r message=FALSE, warning = FALSE}
+# only select national level data and gdp
+vars <- c(1:9, 43, 45:46)
+
+sanfac_data <- read_csv(file.path(intermediate_dir, "clean_sanfac_2019.csv")) %>% 
+  mutate_at(vars(6:44), parse_number) %>% 
+  filter(year == 2015) %>% 
+  dplyr::select(-sl, -year, -country) %>% 
+  left_join(wdi_indicators) %>% 
+  left_join(sanit) %>% 
+  dplyr::select(vars)
+
+
+sanfac_train <- sanfac_data %>% 
+  filter(!is.na(rural_sf)) %>% 
+  dplyr::select(-rural_sf, -urban_sf, -iso3)
+
+
+rural_train <- sanfac_data %>% 
+  filter(!is.na(rural_sf)) %>% 
+  dplyr::pull(rural_sf)
+
+
+
+```
+
+
+# set the seed and run a lm 
+```{r warning = FALSE}
+
+
+set.seed(310)
+ctrl <- trainControl(method = "repeatedcv", repeats = 5)
+
+ruralLm <- caret::train(x = sanfac_train, y = rural_train, method = "lm")
+rural_lm_info <- ruralLm$results
+```
+
+
+# Run a PCR and PLS regression model and compare the RMSE's with different number of components. 
+```{r warning = FALSE}
+set.seed(310)
+ruralPCR <- caret::train(x = sanfac_train, y = rural_train,
+                        method = "pcr",
+                        #trControl = ctrl,
+                        tuneLength =8)
+
+set.seed(310)
+ruralPLS <- caret::train(x = sanfac_train, y = rural_train,
+                        method = "pls",
+                        #trControl = ctrl,
+                        preProcess = c("center", "scale"),
+                        tuneLength =8)
+
+
+comps <- rbind(ruralPLS$results, ruralPCR$results)
+comps$Model <- rep(c("PLS", "PCR"), each =8)
+```
+
+
+## Plot the RMSE as a function of the number of components for the PCR and PLS models.
+```{r}
+ggplot(comps, aes(x=ncomp, y = RMSE))+
+  geom_line(aes(color = Model))+
+  labs(
+    title = "PCR vs PLS regression for rural sanitation factors",
+    subtitle = "the black line is the RMSE for a lm",
+    x = "Number of Components"
+  ) +
+  theme_bw()+
+  scale_y_continuous(limits = c(0, .25), expand = c(0,0))+
+  scale_x_continuous(expand = c(0,0)) +
+  geom_hline(yintercept = rural_lm_info$RMSE[1])
+
+```
+
+both the pcr and pls are preforming worse or as well as the the linear model. Probably best to use the lm. 
+
+# use the lm to fill in missing data
+```{r}
+sanfac_fill <- sanfac_data %>% 
+  filter(is.na(rural_sf)) %>% 
+  dplyr::select(-rural_sf, -urban_sf) %>% 
+  distinct(iso3, .keep_all = TRUE) %>% 
+  column_to_rownames(var = "iso3")
+
+test <- predict(ruralLm, newdata = sanfac_fill)
+
+filled <- sanfac_fill %>% 
+  mutate(predicted_rural_sf = test) 
+```
+

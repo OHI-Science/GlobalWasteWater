@@ -1,0 +1,33 @@
+---
+title: "2_get_all_dhs_data"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+available <- get_available_datasets()
+
+countries <- available %>% distinct(DHS_CountryCode)
+
+get_all_dhs_data <- function(country) {
+  
+  this_data   <- dhs_data(tagIds   = 70,
+                       countryIds      = c(country),
+                       breakdown       ="background",
+                       surveyYearStart = 2010,
+                       returnGeometry  = TRUE)
+  
+}
+
+possibly_get_dhs = possibly(get_all_dhs_data, otherwise = "something wrong here")
+
+
+countries_data <- countries %>% 
+  mutate(data = map(DHS_CountryCode, possibly_get_dhs))
+```
+

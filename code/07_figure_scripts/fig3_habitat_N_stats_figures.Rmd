@@ -1,0 +1,339 @@
+---
+title: ""
+output: html_document
+---
+
+```{r}
+install.packages("rgdal")
+library(RColorBrewer)
+
+library(rgdal)
+library(raster)
+library(sf)
+
+library(dplyr)
+library(stringr)
+
+library(here)
+
+library(mapview)
+library(maps)
+library(ggplot2)
+
+# Map of the world:
+library("rnaturalearth")
+library("rnaturalearthdata")
+
+
+source("https://raw.githubusercontent.com/OHI-Science/ohiprep_v2019/gh-pages/workflow/R/common.R")
+ohi_rasters()
+region_data()
+
+regions_all <- rgns_all %>%
+  select(rgn_id = rgn_ant_id, region = rgn_name)
+
+cols <- rev(colorRampPalette(brewer.pal(11, 'Spectral'))(255)) # rainbow color scheme
+cols <- cols[150:255]
+
+```
+
+## raster stack of N inputs
+```{r}
+
+N_inputs <- list.files("/home/shares/ohi/git-annex/land-based/wastewater/habitat/cleaned_N", pattern="mask", full=TRUE)
+tmp<- raster(N_inputs[1])
+plot(tmp)
+click(tmp)
+N_inputs_stack <- raster::stack(N_inputs)
+names(N_inputs_stack) <- gsub("_mol_nonegs_mask", "", names(N_inputs_stack))
+names(N_inputs_stack) <- gsub("global_effluent_2015_", "", names(N_inputs_stack))
+
+# add regions
+N_inputs_stack <- stack(N_inputs_stack, zones)
+
+```
+
+## coral
+
+Convert habitat raster to sf point data
+```{r}
+
+habs <- raster("/home/shares/ohi/git-annex/land-based/wastewater/habitat/habitat_rasters/coral.tif")
+
+hab_points <- rasterToPoints(habs, spatial=TRUE)
+
+```
+
+Extract N data at coral points:
+```{r}
+
+hab_N <- extract(N_inputs_stack, hab_points, sp=TRUE, cellnumbers=TRUE)
+names(hab_N)[names(hab_N)=="regions_eez_with_fao_ant"] <- "rgn_id"
+
+hab_N_df <- data.frame(hab_N) %>%
+  left_join(regions_all, by="rgn_id") %>%
+  dplyr::select(-coral, -optional, -rgn_id)
+
+1-sum(hab_N_df$total_N %in% 0)/sum(!is.na(hab_N_df$total_N)) # coral exposed to wastewater N inputs
+sum(is.na(hab_N_df$total_N))/dim(hab_N)[1]  # losing a fairly large portion of coral
+
+quant975 <-  quantile(hab_N_df$total_N, c(.975), na.rm=TRUE)  # 386509.2 
+
+hab_N_df_cat <- hab_N_df %>%
+  filter(!is.na(total_N)) %>%
+  mutate(stress_cat = ifelse(total_N %in% 0, 1, 2)) %>%
+  mutate(stress_cat = ifelse(total_N >= quant975, 3, stress_cat)) %>%
+  rowwise() %>%
+  mutate(untreated_N = open_N + septic_N) %>%
+  mutate(prop_untreated = untreated_N/(untreated_N + treated_N))
+
+rel_open_vs_treat <- hab_N_df_cat %>%
+  rowwise() %>%
+  mutate(untreated_N = open_N + septic_N) %>%
+  group_by(region) %>%
+  summarize(untreated_N = sum(untreated_N, na.rm=TRUE),
+            treated_N = sum(treated_N, na.rm=TRUE),
+            total_N_avg = mean(total_N, na.rm=TRUE),
+            total_coral = n()) %>%
+  ungroup() %>%
+  mutate(prop_untreated = untreated_N/(untreated_N + treated_N)) %>%
+  arrange(-total_N_avg)
+
+rel_open_vs_treat %>% data.frame()
+
+hab_N_rgn_hotspot <- hab_N_df_cat %>%
+  group_by(region) %>%
+  dplyr::summarize(habitat_cells = n(),
+            high_stress_cells = sum(stress_cat==3)) %>%
+  ungroup() %>%
+  mutate(prop_high_stress = high_stress_cells/habitat_cells) %>%
+  arrange(-prop_high_stress)
+                             
+
+high_source <- hab_N_df_cat %>%
+  dplyr::select(cells, open_N, septic_N, treated_N, total_N) %>%
+  tidyr::pivot_longer(-cells, "source") %>%
+  filter(!(source %in% "total_N"))  %>%
+  group_by(cells) %>%
+  slice(which.max(value)) %>%
+  dplyr::select(-value)
+
+table(high_source$source)
+(204245 + 5040)/(204245 + 5040 + 55480)
+
+```
+
+
+## Plot
+data
+```{r}
+
+plot_data <- left_join(hab_N_df_cat, high_source)
+
+sp_plot_data <- SpatialPointsDataFrame(plot_data[,c("x", "y")],
+                   plot_data,    #the R object to convert
+                    proj4string = crs(ocean)) 
+mapview(sp_plot_data[1:2000,])
+
+sp_plot_data <- spTransform(sp_plot_data, CRS("+init=epsg:4326"))
+
+```
+
+
+
+```{r}
+
+png(here("results/figure_scripts/output/coral.png"), res=500, width=8, height=4, units="in")  
+
+par(ann = FALSE,
+    bg = "white",
+    bty = "n",
+    mai = c(0,0,0,0),
+    mgp = c(0, 0, 0),
+    oma = c(0,0,0,0),
+    omd = c(0,0,0,0),
+    omi = c(0,0,0,0),
+    usr = c(-180, 180, -80, 80),
+    pin = c(4,2),
+    plt = c(0,1,0,1),
+    pty = "m",
+    xaxs = 'i',
+    xaxt = 'n',
+    xpd = FALSE,
+    yaxs = 'i',
+    yaxt = 'n')
+map('world', col="grey", fill=TRUE, bg="white", lwd=0.2, mar=rep(0,4), border=0, ylim=c(-80,80), ann=FALSE, axes=FALSE)
+par(new =TRUE)
+plot(sp_plot_data, add=TRUE, pch=19, cex=0.4, col="#ddc956", lwd=0)
+plot(sp_plot_data[sp_plot_data$stress_cat==1,], add=TRUE, pch=19, cex=0.4, col="#3895D308", lwd=0)
+plot(sp_plot_data[sp_plot_data$stress_cat==3,], add=TRUE, pch=19, cex=0.4, col="#FF4500", lwd=0)
+
+dev.off()
+
+
+
+library(rgeos)
+world <- ne_countries(scale = "medium", returnclass = "sf")
+class(world)
+
+sf_plot_data <- st_as_sf(sp_plot_data)
+sf_plot_data <- filter(sf_plot_data, !is.na(prop_untreated))
+
+ggplot() +
+  geom_sf(data=world, color="grey", size=0.2) +
+  geom_sf(data=sf_plot_data, aes(color=prop_untreated), size=0.2) +
+  scale_color_gradientn(colors=rev(RColorBrewer::brewer.pal(n=11,"Spectral"))) +
+  theme_void()
+
+ggplot() +
+  geom_sf(data=world, color="grey", size=0.2) +
+  geom_sf(data=filter(sf_plot_data, stress_cat==3), aes(color=prop_untreated), size=0.2) +
+  scale_color_gradientn(colors=rev(RColorBrewer::brewer.pal(n=11,"Spectral"))) +
+  theme_void()
+
+
+```
+
+## seagrass
+
+Convert habitat raster to sf point data
+```{r}
+
+habs <- raster("/home/shares/ohi/git-annex/land-based/wastewater/habitat/habitat_rasters/seagrass.tif")
+
+hab_points <- rasterToPoints(habs, spatial=TRUE)
+
+```
+
+Extract N data at seagrass points:
+```{r}
+
+hab_N <- extract(N_inputs_stack, hab_points, sp=TRUE, cellnumbers=TRUE)
+names(hab_N)[names(hab_N)=="regions_eez_with_fao_ant"] <- "rgn_id"
+
+hab_N_df <- data.frame(hab_N) %>%
+  left_join(regions_all, by="rgn_id") %>%
+  dplyr::select(-seagrass, -optional, -rgn_id)
+
+1-sum(hab_N_df$total_N %in% 0)/sum(!is.na(hab_N_df$total_N)) # seagrass exposed to wastewater N inputs
+sum(is.na(hab_N_df$total_N))/dim(hab_N)[1]  # losing a fairly large portion of seagrass
+
+quant975 <-  quantile(hab_N_df$total_N, c(.975), na.rm=TRUE)
+
+hab_N_df_cat <- hab_N_df %>%
+  filter(!is.na(total_N)) %>%
+  mutate(stress_cat = ifelse(total_N == 0, 1, 2)) %>%
+  mutate(stress_cat = ifelse(total_N >= quant975, 3, stress_cat)) %>%
+  rowwise() %>%
+  mutate(untreated_N = open_N + septic_N) %>%
+  mutate(prop_untreated = untreated_N/(untreated_N + treated_N))
+
+rel_open_vs_treat <- hab_N_df_cat %>%
+  rowwise() %>%
+  mutate(untreated_N = open_N + septic_N) %>%
+  group_by(region) %>%
+  summarize(untreated_N = sum(untreated_N, na.rm=TRUE),
+            treated_N = sum(treated_N, na.rm=TRUE),
+            total_N_avg = mean(total_N, na.rm=TRUE),
+            total_seagrass = n()) %>%
+  ungroup() %>%
+  mutate(prop_untreated = untreated_N/(untreated_N + treated_N)) %>%
+  arrange(-total_N_avg)
+
+rel_open_vs_treat %>% data.frame()
+
+
+hab_N_rgn_hotspot <- hab_N_df_cat %>%
+  group_by(region) %>%
+  dplyr::summarize(habitat_cells = n(),
+            high_stress_cells = sum(stress_cat==3)) %>%
+  ungroup() %>%
+  mutate(prop_high_stress = high_stress_cells/habitat_cells) %>%
+  arrange(-prop_high_stress)
+                 
+hab_N_rgn_hotspot %>% data.frame()            
+
+high_source <- hab_N_df_cat %>%
+  dplyr::select(cells, open_N, septic_N, treated_N, total_N) %>%
+  tidyr::pivot_longer(-cells, "source") %>%
+  filter(!(source %in% "total_N"))  %>%
+  group_by(cells) %>%
+  slice(which.max(value)) %>%
+  dplyr::select(-value)
+
+table(high_source$source)
+(190885 + 8463)/(190885 + 8463 + 180447)
+
+```
+
+
+## Plot
+data
+```{r}
+
+plot_data <- left_join(hab_N_df_cat, high_source)
+
+sp_plot_data <- SpatialPointsDataFrame(plot_data[,c("x", "y")],
+                   plot_data,    #the R object to convert
+                    proj4string = crs(ocean)) 
+mapview(sp_plot_data[1:2000,])
+
+sp_plot_data <- spTransform(sp_plot_data, CRS("+init=epsg:4326"))
+
+```
+
+
+
+```{r}
+
+png(here("results/figure_scripts/output/seagrass.png"), res=500, width=8, height=4, units="in")  
+
+par(ann = FALSE,
+    bg = "white",
+    bty = "n",
+    mai = c(0,0,0,0),
+    mgp = c(0, 0, 0),
+    oma = c(0,0,0,0),
+    omd = c(0,0,0,0),
+    omi = c(0,0,0,0),
+    usr = c(-180, 180, -80, 80),
+    pin = c(4,2),
+    plt = c(0,1,0,1),
+    pty = "m",
+    xaxs = 'i',
+    xaxt = 'n',
+    xpd = FALSE,
+    yaxs = 'i',
+    yaxt = 'n')
+map('world', col="grey", fill=TRUE, bg="white", lwd=0.2, mar=rep(0,4), border=0, ylim=c(-80,80), ann=FALSE, axes=FALSE)
+par(new =TRUE)
+plot(sp_plot_data, add=TRUE, pch=19, cex=0.4, col="#ddc956", lwd=0)
+plot(sp_plot_data[sp_plot_data$stress_cat==1,], add=TRUE, pch=19, cex=0.4, col="#3895D308", lwd=0)
+plot(sp_plot_data[sp_plot_data$stress_cat==3,], add=TRUE, pch=19, cex=0.4, col="#FF4500", lwd=0)
+
+dev.off()
+
+library(rgeos)
+world <- ne_countries(scale = "medium", returnclass = "sf")
+class(world)
+
+sf_plot_data <- st_as_sf(sp_plot_data)
+sf_plot_data <- filter(sf_plot_data, !is.na(prop_untreated))
+
+ggplot() +
+  geom_sf(data=world, color="grey", size=0.2) +
+  geom_sf(data=sf_plot_data, aes(color=prop_untreated), size=0.2) +
+  scale_color_gradientn(colors=rev(RColorBrewer::brewer.pal(n=11,"Spectral"))) +
+  theme_void()
+
+ggplot() +
+  geom_sf(data=world, color="grey", size=0.2) +
+  geom_sf(data=filter(sf_plot_data, stress_cat==3), aes(color=prop_untreated), size=0.2) +
+  scale_color_gradientn(colors=rev(RColorBrewer::brewer.pal(n=11,"Spectral"))) +
+  theme_void()
+
+
+
+
+```
+

@@ -1,0 +1,185 @@
+---
+title: "DHS_final_workflow"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(dhs)
+library(countrycode)
+
+```
+
+```{r}
+hv205_ref <- tribble(
+~hv205,      ~hv205_ref,                             ~input_type,
+  10,      "FLUSH TOILET",                              "NA",
+  11,      "Flush to piped sewer system",               "sewer",
+  12,      "Flush to septic tank",                      "septic",
+  13,      "Flush to pit latrine",                      "direct",
+  14,      "Flush to somewhere else",                   "NA",
+  15,      "Flush, dont know where",                    "NA",
+  20,      "PIT TOILET LATRINE",                        "direct",
+  21,      "Ventilated Improved Pit latrine (VIP)",     "direct",
+  22,      "Pit latrine with slab",                     "direct",
+  23,      "Pit latrine without slab/open pit",         "direct",
+  30,      "NO FACILITY",                               "direct",
+  31,      "No facility/bush/field",                    "direct",
+  41,      "Composting toilet",                         "direct",
+  42,      "Bucket toilet",                             "direct",
+  43,      "Hanging toilet/latrine",                    "direct",
+  96,      "Other",                                     "NA",
+  99,      "Missing",                                   "NA"
+  )  %>% 
+  mutate(input_score = case_when(
+    input_type == "sewer"  ~ 0.01,
+    input_type == "septic" ~ 0.316,
+    input_type == "direct" ~ 0.3
+  ))
+
+sanfac <- read_csv(sanit_factors_fn) 
+
+
+country_codes_raw <- countrycode::codelist %>% 
+  select(#"un.name.en", 
+         country.name.en, iso3n, iso2c, iso3c) 
+
+country <- country_list %>% 
+  select(DHS_CountryCode) %>% 
+  left_join(country_codes_raw, by=c("DHS_CountryCode" = "iso2c"))
+
+
+
+```
+
+
+```{r}
+
+# downloads and geo_downloads
+
+blank <- tribble(~country,         
+                ~URBAN_RURA,      
+                ~sanfac_from_DHS, 
+                ~DHS_sd,          
+                ~sf_h)
+
+final_df <- blank
+
+for(i in 41:length(downloads)){
+  
+  this_data <- downloads[[i]]
+  
+  this_geo_data <- geo_downloads[[i]]
+  
+  country <- country_list$DHS_CountryCode[i]
+  
+  #this_iso3
+  
+  country_name <- datasets %>% 
+    filter(DHS_CountryCode == country) %>% 
+    distinct(CountryName) %>% 
+    pull(CountryName)
+
+  
+  household_data <- readRDS(this_data) %>% 
+    dplyr::select(1:10, "hv025", "hv205") 
+  
+  
+  geo_data <- readRDS(this_geo_data)@data %>% 
+    dplyr::select(
+      "DHSCLUST",
+      "URBAN_RURA",
+      "LATNUM",
+      "LONGNUM"
+    ) %>% 
+    mutate(DHSCLUST = as.integer(DHSCLUST)) 
+  
+  
+  
+  our_sanits <- sanfac %>% 
+    filter(country == country_name) %>% 
+    dplyr::select(15:23) %>% 
+    pivot_longer(everything(), names_to = "name", values_to = "value") %>% 
+    mutate(URBAN_RURA = case_when(
+      str_detect(name, "^rural") ~ "R",
+      str_detect(name, "^urban") ~ "U",
+      str_detect(name, "^national") ~ "Nat"
+    ),
+      sf_type = str_extract(name, "....$")
+    ) %>% 
+    dplyr::select(-name) %>% 
+    pivot_wider(id_cols = -sf_type, names_from = sf_type) %>% 
+    dplyr::select(URBAN_RURA, sf_h)
+  
+  
+  national_level <- household_data %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(geo_data) %>% 
+  summarise(sanfac_from_DHS = mean(input_score),
+            DHS_sd = sd(input_score)) %>% 
+  mutate(URBAN_RURA = "Nat")
+  
+  urb_rural_level <- household_data %>%
+  #rename(DHSCLUST = hv001) %>%
+  dplyr::select(hv001, hv205) %>% 
+  mutate(hv205 = as.numeric(hv205)) %>% 
+  left_join(hv205_ref) %>% 
+  filter(input_type != "NA") %>%
+  mutate(hv001 = as.integer(hv001)) %>% 
+  rename(DHSCLUST = hv001) %>%
+  left_join(geo_data) %>% 
+  group_by(URBAN_RURA) %>% 
+  summarise(sanfac_from_DHS = mean(input_score),
+            DHS_sd = sd(input_score)) %>% 
+  bind_rows(national_level) %>% 
+  left_join(our_sanits) %>% 
+  #pivot_longer(-URBAN_RURA, names_to = "source", values_to = "sanitation_factor") %>% 
+  mutate(country = country_name) %>% 
+    dplyr::select(country, everything())
+  
+  #assign(paste0("final_df_", country_name), urb_rural_level)
+  
+  
+  final_df <- final_df %>% 
+    bind_rows(urb_rural_level)
+
+  
+}
+
+
+```
+
+
+
+```{r}
+#library(plotly)
+ggplot(final_df, aes(x = sf_h, 
+                     y = sanfac_from_DHS,
+                     ymin=sanfac_from_DHS - DHS_sd, 
+                     ymax=sanfac_from_DHS + DHS_sd, )) +
+  geom_point(aes(color = country)) +
+  facet_grid(. ~ URBAN_RURA) +
+  geom_abline(intecept = 0) +
+  geom_errorbar(position=position_dodge(.9), colour="grey30", alpha = .5, width=.005) +  
+  labs(
+    title = "Sanitation Factor Comparison",
+    x = "Our Sanitation Factor Estimates",
+    y = "DHS Sanitation Factors",
+    legend = "Country"
+  ) +
+  theme(text=element_text(family="sansserif", size = 20, color = "black"))
+  
+
+
+```
+

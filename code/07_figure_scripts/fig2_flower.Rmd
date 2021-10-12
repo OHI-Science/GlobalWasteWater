@@ -1,0 +1,678 @@
+---
+title: "circle_plot_code"
+author: "Gordon Blasco"
+date: "4/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+library(patchwork)
+library(viridis)
+```
+FINAL FIGURE 2 SCRIPT
+```{r}
+# match it
+nations <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/effluent_N_countries_gdam_all.shp")
+
+nations_df <- st_set_geometry(nations, NULL)
+
+country_name_df <- countrycode::codelist %>% 
+  select(country.name.en, iso3c, continent) %>% 
+  rename(ISO3 = iso3c, 
+         country_name = country.name.en) %>% 
+  rename(region = continent) %>% 
+  mutate(region = if_else(ISO3 == "CCK", "Oceania", region))
+
+
+nations <- nations %>% 
+  rename(effluent_o = open_N, 
+         effluent_t = treated_N, 
+         effluent_s = septic_N,  
+         effluent_a = tot_N,)
+
+  
+
+```
+
+```{r}
+supp_table_5 <- nations %>% 
+  select(ISO3, effluent_o, effluent_s, effluent_t, effluent_a) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(ISO3) %>% 
+  summarize(
+    effluent_o = sum(effluent_o), 
+    effluent_s = sum(effluent_s), 
+    effluent_t = sum(effluent_t),
+  ) %>% 
+  ungroup() %>% 
+  mutate(total = effluent_o+ effluent_s +effluent_t) %>% 
+  left_join(country_name_df) %>% 
+  filter(!is.na(country_name)) %>% 
+  rename(open = effluent_o,
+         septic = effluent_s, 
+         treated = effluent_t) %>% 
+  select(ISO3, country_name, region, open, septic, treated, total) %>% 
+  filter(total >= 10) %>% 
+  rename(
+    rgn_id = ISO3,
+    rgn_name = country_name,
+    total = total, 
+    georegion = region
+  ) %>% 
+  select(-georegion)
+```
+
+
+```{r 3nm_eez_trend_circleplot}
+# UN georegions
+# UNgeorgn_nm <- read.csv("https://raw.githubusercontent.com/OHI-Science/ohiprep/master/globalprep/spatial/v2017/output/georegion_labels.csv") 
+# un_rgn <- UNgeorgn_nm %>%
+#   dplyr::select(rgn_id, georegion = r1_label)
+# 
+
+no_countries <- 40
+
+chi <- nations %>% 
+  select(ISO3, effluent_o, effluent_s, effluent_t, effluent_a) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(ISO3) %>% 
+  summarize(
+    effluent_o = sum(effluent_o), 
+    effluent_s = sum(effluent_s), 
+    effluent_t = sum(effluent_t),
+  ) %>% 
+  ungroup() %>% 
+  mutate(total = effluent_o+ effluent_s +effluent_t) %>% 
+  left_join(country_name_df) %>% 
+  filter(!is.na(country_name)) %>% 
+  rename(open = effluent_o,
+         septic = effluent_s, 
+         treated = effluent_t) %>% 
+  select(ISO3, country_name, region, open, septic, treated, total) %>% 
+  filter(total >= 10) %>% 
+  rename(
+    rgn_id = ISO3,
+    rgn_name = country_name,
+    chi = total, 
+    georegion = region
+  ) %>% 
+  select(-open,-septic,-treated)
+
+
+top_val_vec <- chi %>% 
+  arrange(-chi) %>% 
+  head(no_countries) %>% 
+  pull(rgn_id)
+
+rm_top_val_vec <- top_val_vec %>% 
+  head(no_countries-1)
+
+linking_co <- top_val_vec %>% tail(1)
+
+chi <- chi %>% 
+  filter(!(rgn_id %in% rm_top_val_vec))
+
+impacts <- nations %>% 
+  select(ISO3, effluent_o, effluent_s, effluent_t, effluent_a) %>% 
+  st_set_geometry(NULL) %>% 
+  filter(!(ISO3 %in% rm_top_val_vec)) %>% 
+  group_by(ISO3) %>% 
+  summarize(
+    effluent_o = sum(effluent_o), 
+    effluent_s = sum(effluent_s), 
+    effluent_t = sum(effluent_t),
+  ) %>% 
+  ungroup() %>% 
+  mutate(total = effluent_o+ effluent_s +effluent_t) %>% 
+  left_join(country_name_df) %>% 
+  filter(!is.na(country_name)) %>% 
+  rename(open = effluent_o,
+         septic = effluent_s, 
+         treated = effluent_t) %>% 
+  select(ISO3, country_name, region, open, septic, treated, total) %>% 
+  filter(total >= 45) %>% 
+  rename(
+    rgn_id = ISO3,
+    rgn_name = country_name,
+    georegion = region
+  ) %>% 
+  select(rgn_id, rgn_name, georegion, open, septic, treated) %>% 
+  pivot_longer(cols = c(open, septic, treated), 
+               names_to = "pressure")
+
+
+
+
+bar_df <- nations %>% 
+  select(ISO3, effluent_o, effluent_s, effluent_t, effluent_a) %>% 
+  st_set_geometry(NULL) %>% 
+  filter((ISO3 %in% top_val_vec)) %>% 
+  group_by(ISO3) %>% 
+  summarize(
+    effluent_o = sum(effluent_o), 
+    effluent_s = sum(effluent_s), 
+    effluent_t = sum(effluent_t),
+  ) %>% 
+  ungroup() %>% 
+  mutate(total = effluent_o+ effluent_s +effluent_t) %>% 
+  left_join(country_name_df) %>% 
+  filter(!is.na(country_name)) %>% 
+  rename(open = effluent_o,
+         septic = effluent_s, 
+         treated = effluent_t) %>% 
+  select(ISO3, country_name, region, open, septic, treated, total) %>% 
+  filter(total >= 45) %>% 
+  rename(
+    rgn_id = ISO3,
+    rgn_name = country_name,
+    georegion = region
+  ) %>% 
+  select(rgn_id, rgn_name, georegion, open, septic, treated) %>% 
+  pivot_longer(cols = c(open, septic, treated), 
+               names_to = "pressure") %>% 
+  mutate(
+    color_col = if_else(rgn_id == linking_co, "red", "black")
+  )
+
+bar_rank <- bar_df %>% 
+  group_by(rgn_name) %>% 
+  summarise(
+    total = sum(value)
+  ) %>% 
+  arrange(-total) %>% 
+  pull(rgn_name)
+
+
+#bar_df$pressure_name <- factor(impacts$pressure_name, levels=rev(pressure_name$pressure_name))
+bar_df$rgn_name <- factor(bar_df$rgn_name, levels=bar_rank)
+
+pressure_name_df <- data.frame(pressure = c("open", "septic", "treated"),
+                            pressure_name = c("Open", "Septic", "Treated"))
+
+bar_df <- bar_df %>%
+  left_join(pressure_name_df, by = "pressure")
+
+#impacts$pressure_name <- factor(impacts$pressure_name, levels=rev(pressure_name$pressure_name))
+#impacts$rgn_name <- factor(impacts$rgn_name, levels=unique(rank_rgn$rgn_name))
+
+
+```
+
+
+
+# run the code
+```{r 3nm_eez_trend_circleplot}
+# get georegion ranks based on mean chi values, and use to rank chi data
+rank_georgn <- chi %>%
+  group_by(georegion) %>%
+  summarize(mean_chi = mean(chi),
+            max_chi = max(chi),
+            count = length(chi)) %>%
+  mutate(custom_rank_order = case_when(
+    georegion == "Oceania"  ~ 1,
+    georegion == "Americas" ~ 2,
+    georegion == "Europe"   ~ 5,
+    georegion == "Asia"     ~ 4,
+    georegion == "Africa"   ~ 3,
+  )) %>% 
+  arrange(custom_rank_order) #%>% 
+  #arrange(lev)
+
+#custom_rank<- c("Oceania",  "Americas", "Europe",   "Asia",   "Africa")
+
+chi$georegion <- factor(chi$georegion, levels=rank_georgn$georegion)
+
+
+### Organize the chi data and add a few extra variables to help plotting
+# Including empty spaces to add a y-axes
+
+rank_rgn <- chi %>%
+  arrange(georegion, chi)
+
+# add empty space
+empty_bar <- nrow(rank_georgn)-1
+to_add <- data.frame(matrix(NA, empty_bar, ncol(rank_rgn)) )
+colnames(to_add) = colnames(rank_rgn)
+to_add$rgn_name <- as.character(1:empty_bar)
+rank_rgn  <- rbind(to_add, rank_rgn)
+
+# modify region names to be shorter
+# rank_rgn <- rank_rgn %>%
+#   mutate(rgn_name_short = rgn_new_name, 
+#          rgn_name_short = str_remove(rgn_name_short, "\\(.*$"),
+#          rgn_name_short = str_remove(rgn_name_short, "\\ &.*$"),
+#          rgn_name_short = str_remove(rgn_name_short, "Northern "),
+#          rgn_name_short = str_remove(rgn_name_short, "\\ -.*$"))
+         
+         
+         # rgn_name_short = gsub("Islands", "Isl", rgn_name_short),
+         # rgn_name_short = gsub("Island", "Isl", rgn_name_short),
+         # rgn_name_short = gsub("Democratic", "Dem", rgn_name_short),
+         # rgn_name_short = gsub("Republic", "Rep", rgn_name_short),
+         # rgn_name_short = gsub("South", "S", rgn_name_short),
+         # rgn_name_short = gsub("American", "Am", rgn_name_short),
+         # rgn_name_short = gsub("the United States", "US", rgn_name_short),
+         # rgn_name_short = gsub("Territory", "Terr", rgn_name_short),
+         # rgn_name_short = gsub("Saint", "St", rgn_name_short),
+         # rgn_name_short = gsub(" and ", " & ", rgn_name_short),
+         # rgn_name_short = gsub("Republique", "Rep", rgn_name_short),
+         # rgn_name_short = gsub("Dem Rep of the", "Dem Rep of", rgn_name_short),
+         # rgn_name_short = gsub("Georgia and the", "Georgia and", rgn_name_short),
+         # rgn_name_short = gsub("St Vincent and the", "St Vincent and", rgn_name_short),
+         # rgn_name_short = gsub("Howland Isl & Baker Isl", "Howland & Baker Isl", rgn_name_short),
+         # rgn_name_short = gsub("Northern", "N", rgn_name_short), 
+         # rgn_name_short = gsub("Reunion", "Reunion   ", rgn_name_short))
+
+
+# some code to orient the country labels
+sequence_length = length(unique(rank_rgn$rgn_name))
+first_sequence = c(1:(sequence_length%/%2)) 
+second_sequence = c((sequence_length%/%2+1):sequence_length) 
+first_angles = c(90 - 180/length(first_sequence) * first_sequence)
+second_angles = c(-90 - 180/length(second_sequence) * second_sequence)
+
+rank_rgn$angle <- c(first_angles,second_angles)
+rank_rgn$hjust <- c(rep(0, length(first_sequence)), 
+                    rep(1, length(second_sequence)))
+
+# color for region labels
+rank_rgn <- rank_rgn %>%
+  mutate(rgn_name  = factor(rgn_name, unique(rgn_name))) %>%
+  mutate(georegion = factor(georegion, unique(georegion))) %>%
+  mutate(color = "white", 
+         color = if_else(rgn_id == linking_co, "red", "black")) %>% 
+  mutate(color = ifelse(is.na(chi), "white", color)) %>% 
+  mutate(rgn_new_name = as.character(rgn_name), #if_else(rgn_id == linking_co, as.character(rgn_name), ""),
+         rgn_new_name = if_else(is.na(rgn_id), "", rgn_new_name))%>%
+  mutate(rgn_name_short = rgn_new_name, 
+         rgn_name_short = str_remove(rgn_name_short, "\\(.*$"),
+         rgn_name_short = str_remove(rgn_name_short, "\\ &.*$"),
+         rgn_name_short = str_remove(rgn_name_short, "Northern "),
+         rgn_name_short = str_remove(rgn_name_short, "\\ -.*$"),
+         rgn_name_short = str_replace(rgn_name_short, "Dominican Republic", "Dominican Rep."),
+         rgn_name_short = str_replace(rgn_name_short, "Macao SAR China", "Macao"),
+         rgn_name_short = str_replace(rgn_name_short, "United Arab Emirates", "UAE"),
+         rgn_name_short = str_replace(rgn_name_short, "Hong Kong SAR China", "Hong Kong"),
+         rgn_name_short = str_replace(rgn_name_short, "Palestinian Territories", "Palestine"),
+         rgn_name_short = str_replace(rgn_name_short, "Caribbean Netherlands", "Carib. Netherlands"),
+         rgn_name_short = str_replace(rgn_name_short, "Central African Republic", "Cen. Afr. Rep."),
+         rgn_name_short = str_replace(rgn_name_short, "Papua New Guinea", "Papua New G."),
+         rgn_name_short = str_replace(rgn_name_short, "Equatorial Guinea", "Equ. Guinea")
+         )
+
+
+########### marking georegions
+
+# add column to identify when georegion changes
+rgn_shift <- rank_rgn %>%
+  mutate(georegion = ifelse(is.na(georegion), "tmp", georegion)) %>%
+  mutate(georegion = as.factor(georegion)) %>%
+  mutate(region_shift = as.numeric(georegion) - lag(as.numeric(georegion)), default=first(as.numeric(georegion)))
+
+rgn_shift <- which(rgn_shift$region_shift > 0)
+rgn_shift <- c(1, rgn_shift) -0.5
+rgn_shift <- data.frame(rgn_shift_x=rgn_shift,
+                        georegion = rank_georgn$georegion,
+                        name_x= c(12, 56, 95, 145, 183), # 140
+                        name_y=c(50, 50,  50, 50, 50))
+rgn_shift <- rgn_shift %>%
+  mutate(georegion = as.character(georegion)) %>%
+  mutate(georegion = ifelse(georegion == "Latin America and the Caribbean", "Latin America and\nthe Caribbean",
+                            georegion))
+```
+
+
+```{r 3nm_eez_trend_circleplot}
+# get impact data
+
+
+# ## add some blanks to separate groups
+to_add <-  data.frame( matrix(NA, empty_bar*nlevels(as.factor(impacts$pressure)), ncol(impacts)) )
+colnames(to_add) <- colnames(impacts)
+to_add$pressure <- rep(levels(as.factor(impacts$pressure)), each=empty_bar)
+to_add$value <-  0
+to_add$rgn_name <- as.character(rep(1:empty_bar, nlevels(as.factor(impacts$pressure)))) 
+
+impacts <- rbind(to_add, impacts, to_add)
+
+
+## rank of pressure categories
+impacts %>%
+  group_by(pressure) %>%
+  summarize(mean = mean(value)) %>%
+  arrange(mean)
+
+pressure_name <- data.frame(pressure = c("open", "septic", "treated"),
+                            pressure_name = c("Open", "Septic", "Treated"))
+
+impacts <- impacts %>%
+  left_join(pressure_name, by = "pressure")
+
+impacts$pressure_name <- factor(impacts$pressure_name, levels=rev(pressure_name$pressure_name))
+impacts$rgn_name <- factor(impacts$rgn_name, levels=unique(rank_rgn$rgn_name))
+```
+
+
+```{r 3nm_eez_trend_circleplot}
+#myPalette <- c("#003f5c", "#58508d", "#bc5090")
+#revpal <- c( "#bc5090", "#58508d","#003f5c")
+
+
+
+myPalette <- c("#db5087", "#f9cdac",  "#5b1f84")
+revpal <- c( "#5b1f84", "#f9cdac", "#db5087")
+
+
+
+new_pal <- c()
+
+circle_theme <- theme(axis.line=element_blank(),
+                      axis.text.y=element_blank(),
+                      axis.ticks=element_blank(),
+                      axis.title.x=element_blank(),
+                      axis.title.y=element_blank(),
+                      #legend.position="none",
+                      panel.background=element_blank(),
+                      panel.border=element_blank(),
+                      panel.grid.major=element_blank(),
+                      panel.grid.minor=element_blank(),
+                      plot.background=element_blank(),
+                      axis.text.x = element_blank())
+
+# circle plot
+# https://www.r-graph-gallery.com/299-circular-stacked-barplot/
+
+#max_val = log(max(2.851651e+12)+1)
+
+#impact_filter <- impacts %>% 
+  #filter(!(rgn_id %in% top_10_vec))
+
+
+# ggplot(data=impacts, aes(x=rgn_name, y=value, fill=pressure_name)) + 
+#   geom_bar(stat="identity") +
+#   scale_y_continuous(limits = c(-2.851651e+12, 2.851651e+12))+
+#   geom_errorbar(aes(x = 1, ymin = -0.13, ymax=max_val), alpha=0)  +
+#   geom_text(data=rank_rgn, aes(x=rgn_name, y=100, label=rgn_name_short, angle=angle, hjust=hjust, color=color), inherit.aes = FALSE, size = 3) +
+#   geom_segment(x = 5, y = 0, xend = dim(rank_rgn)[1]+1, yend = 0, colour = "black", alpha=1, size=0.5) +
+#   geom_segment(x = 7, y = -35, xend = dim(rank_rgn)[1]-1, yend = -35, colour = "gray", alpha=1, size=0.5) +
+#   #annotate("text", x = c(3,3,3,3), y = c(-0.05, 0, 0.05, 0.1), label = c(-0.05, 0, 0.05, 0.1), color="darkgrey", angle=-8, size=4) +
+#   scale_colour_identity() +
+#   scale_fill_manual(values=myPalette) +
+#   coord_polar() +
+#   geom_segment(data = rgn_shift, aes(x=rgn_shift_x, xend=rgn_shift_x, y=rep(-35, dim(rgn_shift)[1]), yend=rep(100, dim(rgn_shift)[1])), colour="gray", size=0.5, inherit.aes=FALSE) +
+#   #geom_text(data=rgn_shift, aes(x=name_x, y=-10, label=georegion), inherit.aes=FALSE, size=5) +
+#   geom_point(data=chi, aes(y=chi, x=rgn_name), fill="black", shape="|", size=2.5) +
+#   circle_theme
+
+
+  #ggsave('circleplot.jpg', height=18, width=18, units=c("in"))
+  
+# impact_ready <- chi #%>% 
+#   mutate(
+#     new_name = if_else(rgn_id == linking_co, as.character(rgn_name), ""),
+#     new_name = if_else(is.na(new_name),"", new_name ),
+#     new_name = if_else(pressure_name != "Treated","", new_name),
+#     color_col = if_else(new_name == "", "white", "red")
+#   )
+
+
+
+```
+
+
+```{r 3nm_eez_trend_circleplot}
+
+#rank_rgn <- rgn_name %>% 
+
+
+
+max_value <- impacts %>% 
+  group_by(rgn_id) %>% 
+  summarise(max_val =sum(value)) %>% 
+  ungroup() %>% 
+  filter(max_val == max(max_val)) %>% 
+  head(1) %>% 
+  pull(max_val)
+
+
+lower_limit_for_bars <- -1.851651e+10
+
+
+max_val_buffer <- 1000000000
+
+y_axis_tics <- tribble(
+  ~number, ~name,
+  #100, "100",
+  4400000000,  "- 4.4 Gg",
+  8700000000,  "- 8.7 Gg",
+  13000000000, "-13.0 Gg",
+  17500000000, "-17.5 Gg"
+) %>% 
+  mutate(x_val = 1)
+
+
+  
+flower <- 
+  ggplot(data=impacts, aes(x=rgn_name, y=(value), fill=pressure_name)) + 
+  geom_bar(stat="identity", color = "black") +
+  scale_y_continuous(limits = c(lower_limit_for_bars, 
+                                max_value+max_val_buffer))+
+  #geom_errorbar(aes(x = 1, ymin = -1.851651e+10, ymax=3.415862e+10), alpha=1) +
+  #geom_text(aes(label =new_name, color = color_col))+
+  geom_text(data=rank_rgn, aes(x=rgn_name, 
+                               y=max_value+max_val_buffer, 
+                               label=rgn_name_short, 
+                               angle=angle, 
+                               hjust=hjust, 
+                               color=color), 
+            inherit.aes = FALSE, size = 3) + # was size = 3
+  #geom_segment(x = 5, y = 0, xend = dim(rank_rgn)[1]+1, yend = 0, colour = "black", alpha=1, size=0.5) +
+  geom_segment(x = 0, 
+               y = -7.851651e+8, 
+               xend = dim(rank_rgn)[1], 
+               yend = -7.851651e+8, 
+               colour = "gray", 
+               alpha=1, 
+               size=0.5) +
+  # annotate("text", 
+  #          x = c(3,3,3,3), 
+  #          y = c(-0.05, 0, 0.05, 0.1), 
+  #          label = c(-0.05, 0, 0.05, 0.1), 
+  #          color="darkgrey", 
+  #          angle=-8, 
+  #          size=4) +
+  scale_colour_identity() +
+  scale_fill_manual(values=myPalette) +
+  coord_polar() +
+  geom_segment(data = rgn_shift, aes(x=rgn_shift_x, 
+                                     xend=rgn_shift_x, 
+                                     y=rep(-7.851651e+1, 
+                                           dim(rgn_shift)[1]), 
+                                     yend=rep(max_value+max_val_buffer, #3.715862e+10, 
+                                              dim(rgn_shift)[1])), 
+               colour="gray", size=0.5, inherit.aes=FALSE) +
+  geom_text(data=rgn_shift, 
+            aes(x=name_x, 
+                y=max_value*.6,#1.915862e+10, 
+                label=georegion), 
+            inherit.aes=FALSE, 
+            size=5) +
+  #geom_point(data=chi, aes(y=chi, x=rgn_name), fill="black", shape="|", size=2.5) +
+  geom_text(data = y_axis_tics,
+            aes(y = number,
+                x = x_val,
+                label = name),
+            inherit.aes=FALSE,
+            size = 2.5,
+            hjust = 0,
+            color = "grey50")+
+  circle_theme+
+  theme(legend.position="none")+
+  labs(fill = NULL)#+
+  #theme(axis.text.y = element_text(face="bold"))
+  #guides(fill = guide_legend(override.aes = list(shape = 15)))
+
+flower
+
+```
+
+
+```{r 3nm_eez_trend_circleplot}
+color_vec <- bar_df %>% 
+  distinct(rgn_name, .keep_all = TRUE) %>% 
+  pull(color_col)
+
+color_vec <- c(rep("black", no_countries-1), "red")
+
+plot_bar <- ggplot(data = bar_df, aes(x = rgn_name, 
+                                      y = value, 
+                                      fill = factor(pressure, 
+                                                    levels=c("treated","septic", "open"))))+
+  geom_bar(stat="identity", color = "black")+
+  #geom_text(aes(color = color_col))+
+  scale_y_continuous(expand = c(0,0))+
+  coord_flip()+
+  scale_fill_manual(values=myPalette)+
+ # scale_fill_brewer(palette = "Set1")+
+ # scale_fill_viridis_d()+
+  #theme(axis.text.x = element_text(color_vec))+
+  theme(axis.line=element_blank(),
+        axis.text.y = element_text(color =color_vec),
+        #axis.text.y=element_blank(),
+        #axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.y=element_blank(),
+        legend.position="bottom",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        #panel.grid.major=element_blank(),
+        #panel.grid.minor=element_blank(),
+        plot.background=element_blank(),
+        plot.title.position = "plot",
+        plot.caption = element_text(size = rel(0.9), 
+                                    hjust = 0, 
+                                    vjust = 1#,
+                                    #margin = margin(t = half_line * 0.9)
+                                    ))+
+  labs(fill = NULL)+#,
+       #title = "B) Total Nitrogen Contribution by Treatment Type",
+       #caption = "Fig.1 | (A) Raster visualization of global nitrogen total from the source. (B) The top forty countries are shown in the horizontal barchart on the left of the figure and are excluded \nfrom the spiral plot, except for Mali which is highlighted in both for a sense of scale between the two layouts.") +
+  guides(fill = guide_legend(aes.override = list(shape = 16)))
+
+plot_bar
+
+layout <- c(
+  area(t = 1, l = 3, b = 5, r = 9),
+  area(t = 1, l = 1, b = 5, r = 12)
+)
+final_fig_2 <- plot_bar + flower + 
+  plot_layout(design = layout)
+
+
+ggsave(plot = final_fig_2, 
+       device = "tiff",
+       filename = "scratch/gordon/final_figures/figure_2.tiff",
+       dpi = 600,
+       units = "cm",
+       width = 50,
+       height = 30)
+```
+
+```{r}
+library(raster)
+library(tidyverse)
+library(here)
+library(rgdal)
+library(ggpubr)
+library(sf)
+library(rasterVis)
+
+
+source(here("code", "file_names.R"))
+map <- raster("/home/shares/ohi/git-annex/land-based/wastewater/data/interim/effluent_N_log10.tif")
+r <- raster(effluent_N_log10_fn)
+
+vec_world <- st_read(world_vector_fn) %>% 
+  filter(poly_type == "GADM") 
+
+
+moll <- crs(r)
+st_crs(vec_world) = moll
+
+
+pl <- gplot(r, maxpixels = 1e7) + 
+  geom_tile(aes(fill = value), na.rm = TRUE)+
+  scale_fill_gradient(low ='yellow', high ='darkred', na.value = 'white') +
+  #scale_fill_continuous()+
+  scale_y_continuous(expand = c(0,0))+
+  scale_x_continuous(expand = c(0,0))+
+  coord_equal() +
+  labs(
+    title = "A) Total Nitrogen Effluent (g Log 10)",
+    x = "",
+    y = ""
+   ) + 
+   theme(
+   text = element_text(family = 'serif'),
+   plot.title.position = "plot"
+   )
+
+#pl
+
+p2 <- pl + 
+  geom_sf(data = vec_world,
+          color = "black",
+          fill = "tan", 
+          size = 0.1,
+          alpha = .05,
+          inherit.aes = FALSE)+
+  theme(
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title.y = element_blank(),
+    legend.title = element_blank()#,
+    #legend.position = "bottom",
+    #legend.direction = "horizontal"
+  )
+  
+p2
+
+
+layout2 <- c(
+  patchwork::area(t = 2, l = 3, b = 4, r = 8), 
+  patchwork::area(t = 5, l = 3, b = 9, r = 8),
+  patchwork::area(t = 5, l = 1, b = 9, r = 11)
+)
+
+plot(layout2)
+
+final_test <- p2 + plot_bar + flower + 
+  plot_layout(design = layout2)
+
+
+ggsave(plot = final_test, 
+       device = "png",
+       width = 24,
+       height = 18,
+       dpi = 300,
+       units = "in",
+       limitsize = FALSE,
+       filename = "bigplot_black_line.png")
+
+
+max_value <- bar_df %>% 
+  group_by(rgn_id) %>% 
+  summarise(max_val =sum(value)) %>% 
+  ungroup()
+
+```
+

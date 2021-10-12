@@ -1,0 +1,219 @@
+---
+title: "test"
+author: "Gordon Blasco"
+date: "3/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+suppressPackageStartupMessages({
+ # library(stargazer)
+ # library(tidymodels)
+  library(sf)
+ # library(stars)
+  library(raster)
+  library(countrycode)
+  library(tidyverse)
+ # library(exactextractr)
+ # library(ggpubr)
+ # library(st)
+
+  #library(geobgu)
+#  library(tictock)
+ # library(foreach)
+ # library(doParallel)
+})
+
+
+
+source(here::here("code","file_names.R"))
+
+```
+
+
+```{r}
+# load the open raster
+n_open_raster <- raster(effluent_N_open_fn)
+n_spetic_raster <- raster(effluent_N_septic_fn)
+n_treated_raster <- raster(effluent_N_treated_fn)
+
+# load the nations
+nations <- sf::read_sf(world_vector_fn)
+
+
+# subset to test
+
+test_nat <- nations %>% 
+  head(1)
+
+test_ext$open <- raster::extract(n_open_raster, test_nat, fun = sum, na.rm=TRUE)
+
+
+new <- test_nat
+
+new$ammount <- exact_extract(n_open_raster, new, 'sum')
+  
+  
+  
+  
+  test_nat %>% 
+  mutate(
+    ams=exact_extract(n_open_raster, geometry, 'sum')
+  )
+
+```
+
+```{r}
+# load the open raster
+n_open_raster    <- raster(effluent_N_open_fn)
+n_septic_raster  <- raster(effluent_N_septic_fn)
+n_treated_raster <- raster(effluent_N_treated_fn)
+
+# load the nations
+nations <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/effluent_N_countries.shp")
+nations <- sf::read_sf(N_pourpoints_fn)
+
+crs <- st_crs(nations)
+
+# run the extractions
+world_total <- nations[5:10,]
+
+
+#beginCluster(n = 30)
+
+#world_total$open    <- raster::extract(n_open_raster, world_total, fun = sum, na.rm=TRUE)
+#world_total$septic  <- raster::extract(n_septic_raster, world_total, fun = sum, na.rm=TRUE)
+#world_total$treated <- raster::extract(n_treated_raster, world_total, fun = sum, na.rm=TRUE)
+
+#endCluster()
+
+#write_rds(world_total, "world_total.rds")
+```
+
+
+
+
+```{r}
+result_open <- data.frame() #empty result dataframe
+
+nation_test <- nations
+
+system.time(
+      for(i in 1:nrow(nation_test)){ #this is the number of polygons to iterate through
+
+      single <- nation_test[i,] #selects a single polygon
+      iso3 <-   nation_test$ISO3[i]
+      
+      exte <- st_bbox(single) %>% st_as_sfc() %>% as_Spatial()
+      
+      clip1 <- raster::crop(n_open_raster, exte) #crops the raster to the extent of the polygon, I do this first because it speeds the mask up
+      clip2 <- raster::mask(clip1,single) #crops the raster to the polygon boundary
+
+      points<-raster::extract(clip2,single) #extracts data from the raster based on the polygon bound
+      
+      val <- sum(points[[1]], na.rm = TRUE)
+      
+      final <- data.frame(iso3, val)
+      
+      result_open<-rbind(final,result_open)
+
+      })
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+wrangle for plotting:
+```{r}
+country_name <- countrycode::codelist %>% 
+  select(country.name.en, iso3c) %>% 
+  rename(ISO3 = iso3c)
+
+country_name2 <- countrycode::codelist %>% 
+  select(country.name.en, iso3c)
+
+
+world_total_df <- dplyr::select(as.data.frame(world_total), -geometry, -poly_type) %>% 
+  group_by(ISO3) %>% 
+  summarize(
+    open=sum(open),
+    septic=sum(septic),
+    treated=sum(treated)
+  ) %>% 
+  ungroup()%>% 
+  left_join(country_name) %>% 
+  select(-ISO3) %>% 
+  rename(ISO3 = country.name.en)
+
+
+
+world_order <- world_total_df%>% 
+  mutate(total = open+septic+treated) %>% 
+  mutate(ISO3 = forcats::fct_reorder(ISO3, -total))
+
+
+world_plot <- world_total_df %>% 
+  pivot_longer(cols = -ISO3, names_to = "treatment_type") 
+
+
+world_plot$ISO3 <- factor(world_plot$ISO3, levels = levels(world_order$ISO3))
+
+world_plot_ready <- world_plot %>% 
+  arrange(ISO3) %>% 
+  head(3*40)
+
+
+ggplot(world_plot_ready, aes(x = ISO3, y = (value)))+
+  geom_col(aes(fill=treatment_type)) +
+  #scale_x_discrete(aes(labels = country_name)) %>% 
+  coord_flip()+
+      labs(
+        title = "National Nitrogen Effluent by Treatment Type",
+        x = "",
+        y = "Value",
+        legend = ""
+       ) + 
+    ggpubr::theme_pubr()+
+       theme(
+        plot.title.position = "plot"
+       )+
+  scale_y_continuous(expand =c(0,0))+
+  theme(legend.title = element_blank(),
+        text = element_text(family = 'serif'))
+
+output_table <- world_plot %>% 
+  left_join(country_name2, by = c("ISO3"="country.name.en")) %>% 
+  rename(country_name = ISO3) %>% 
+  select(iso3c, country_name, treatment_type, value)
+
+write_csv(output_table, "scratch/gordon/national_treatment_contribution_n.csv")
+
+```
+
+
+# run the pourpoints
+```{r}
+pours <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/pourpoints_N_Alldata.shp")
+
+
+```
+

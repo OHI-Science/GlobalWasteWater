@@ -1,0 +1,126 @@
+---
+title: "Untitled"
+author: "Gordon Blasco"
+date: "4/24/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(sf)
+library(ggpubr)
+library(tidyverse)
+library(stringr)
+```
+
+
+```{r}
+
+N_pours <- sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/N_effluent_output/pourpoints_N_Alldata.shp")
+
+total_pours <- N_pours %>% 
+  distinct(basin_id, .keep_all = TRUE) %>% 
+  select(sum, effluent_o, effluent_s, effluent_t) %>% 
+  #mutate(norm_eff = effluent_a/area) %>% 
+  arrange(-sum) %>% 
+ # head(1000) %>% 
+  mutate(rank = 1:nrow(.), 
+         opp_rank = rev(rank)) %>% 
+  mutate(
+    perc_open = round((effluent_o/ sum)*100,1),
+    perc_septic = round((effluent_s/ sum)*100,1),
+    perc_treated = round((effluent_t/ sum)*100,1)
+  ) %>% 
+  mutate(
+    dominated = case_when(
+      perc_open > perc_septic & perc_open > perc_treated ~ "open",
+      perc_septic > perc_open & perc_septic > perc_treated ~ "septic" , 
+      perc_treated > perc_open & perc_treated > perc_septic ~ "treated"
+    )
+  )
+
+
+N_prep <- N_pours %>% 
+  distinct(basin_id, .keep_all = TRUE) %>% 
+  select(basin_id, sum, effluent_o, effluent_s, effluent_t) %>% 
+  st_drop_geometry() %>% 
+  select(basin_id, sum, effluent_o, effluent_s, effluent_t) %>% 
+  rename(total_nitrogen = sum,
+         open_nitrogen = effluent_o, 
+         septic_nitrogen = effluent_s, 
+         treated_nitrogen = effluent_t)
+  
+FIO_prep <- FIO_pours %>% 
+  distinct(basin_id, .keep_all = TRUE) %>% 
+  st_drop_geometry() %>% 
+  rename(fio = effluent) %>% 
+  select(basin_id, fio)
+
+max_n <- N_prep %>% 
+  arrange(-total_nitrogen) %>% 
+  head(1000) %>% 
+  tail(950) %>% 
+  pull(basin_id) 
+  
+
+max_fio <- FIO_prep %>% 
+  arrange(-fio) %>% 
+  head(1000) %>% 
+  tail(950) %>%
+  pull(basin_id)
+
+
+top_basins <- c(max_n, max_fio) %>% 
+  unique()
+
+final <- N_prep %>% 
+  left_join(FIO_prep, by = "basin_id") %>% 
+  filter(basin_id %in% top_basins) %>% 
+  pivot_longer(cols = c(total_nitrogen, open_nitrogen, septic_nitrogen, treated_nitrogen), names_to = "treatment_type") %>% 
+  mutate(continent_code = str_extract(basin_id, "^..")) %>% 
+  mutate(continent = case_when(
+    continent_code == "au" ~ "Australia",
+    continent_code == "af" ~ "Africa",
+    continent_code == "sa" ~ "South America",
+    continent_code == "al" ~ "",
+    continent_code == "ai" ~ "",
+    continent_code == "na" ~ "North America",
+    continent_code == "eu" ~ "Europe"
+  ))
+
+
+ggplot(final, aes(value, fio))+
+  geom_point(aes(color = continent_code))+
+  #geom_smooth(method = "lm")+
+  facet_grid(continent_code~treatment_type, scales = "free") +
+  labs_pubr()+
+  labs(
+    y = "FIO (Unitless)",
+    x = "Nitrogen (g)",
+    title = "Relationship Between FIO and Nitrogen at Top 1000 Pourpoints"
+  )+
+  theme(plot.title.position = "plot")
+
+ggplot(final, aes(value, fio))+
+  geom_point(aes(color = continent_code))+
+  #geom_smooth(method = "lm")+
+  facet_wrap(~treatment_type, scales = "free") +
+  labs_pubr()+
+  labs(
+    y = "FIO (Unitless)",
+    x = "Nitrogen (g)",
+    title = "Relationship Between FIO and Nitrogen at Top 1000 Pourpoints"
+  )+
+  theme(plot.title.position = "plot")
+  
+  
+
+```
+
+```{r}
+FIO_pours <-  sf::read_sf("/home/shares/ohi/git-annex/land-based/wastewater/data/processed/FIO_effluent_output/effluent_FIO_pourpoints.shp")
+```
+

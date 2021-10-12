@@ -1,0 +1,55 @@
+---
+title: "Rasterize national protein intake data"
+author: "last run by: `r Sys.info()['user']`"
+date: "`r Sys.Date()`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "2_protein_intake")) })
+---
+
+```{r setup, include=FALSE, message = FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(here)
+  library(raster)
+  library(fasterize)
+  library(sf)
+  library(tidyverse)
+})
+
+# set file paths
+source(here("code", "file_names.R"))
+```
+
+
+```{r load_caloric_data}
+protein <- read.csv(protein_gdp_imputed_fn)
+```
+
+```{r load_vector_data}
+world_vector_protein <- st_read(world_vector_fn) %>% 
+  left_join(protein, by = c("ISO3" = "ISO3"))
+```
+
+```{r load_raster}
+rural_urban_input <- raster(rural_urban_input_fn)
+```
+
+
+```{r rasterize}
+protein_g_cap_year_raster <- fasterize(sf = world_vector_protein,
+                                  raster = rural_urban_input,
+                                  field = "protein_g_cap_year")
+```
+
+```{r plot}
+plot(protein_g_cap_year_raster)
+```
+
+```{r save_raster}
+file.remove(protein_g_cap_year_raster_fn)
+writeRaster(x = protein_g_cap_year_raster,
+            filename = protein_g_cap_year_raster_fn)
+```
+
+
+

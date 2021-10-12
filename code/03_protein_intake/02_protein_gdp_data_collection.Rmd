@@ -1,0 +1,114 @@
+---
+title: "GDP data collection"
+author: "Gordon Blasco"
+date: "`r Sys.Date()`"
+output: html_document
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = here::here("docs", "2_protein_intake")) })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(here)
+library(janitor)
+library(WDI)
+library(countrycode)
+library(tidyverse)
+
+
+source(here("code", "file_names.R"))
+
+calories <- read_csv(calories_raw_fn) 
+
+```
+
+
+# get a list of country names and codes
+
+```{r}
+countries <- calories %>% 
+  select(area)
+
+country_codes <- countries %>% 
+  distinct(area) %>% 
+  mutate(new_country = area) %>% 
+  mutate(new_country = replace(new_country, str_detect(new_country, 'Ivoire'), "Ivory Coast")) %>% 
+  mutate(new_country = replace(new_country, str_detect(new_country, 'Luxembourg'), "Luxembourg")) %>% 
+  mutate(new_country = replace(new_country, str_detect(new_country, 'Montenegro'), "Montenegro")) %>% 
+  mutate(new_country = replace(new_country, str_detect(new_country, 'Micronesia'), "Micronesia (Federated States of)")) %>% 
+  separate_rows(new_country, sep = " & ") %>% 
+  mutate(iso3c = countrycode(sourcevar = new_country, 
+                             origin = "country.name",
+                             destination = "iso3c")) %>% 
+  mutate(iso3n = countrycode(sourcevar = new_country, 
+                             origin = "country.name",
+                             destination = "iso3n")) 
+
+
+data <- countrycode::codelist %>% 
+  select(#"un.name.en", 
+         country.name.en, iso3n, iso2c, iso3c) 
+```
+
+
+# make the national level protien consumption
+
+```{r}
+national_cal <- calories %>% 
+  filter(item_code == 2901  &
+           year == 2013 ) %>% 
+  filter(element %in% c("Food supply (kcal/capita/day)", "Protein supply quantity (g/capita/day)")) %>% 
+  select(area_code, area, year, element, quantity) %>% 
+  pivot_wider(
+    names_from = element,
+    values_from = quantity
+  ) %>% 
+  clean_names() %>% 
+  rename(
+    kcal_cap_day = food_supply_kcal_capita_day,
+    protein_g_cap_day = protein_supply_quantity_g_capita_day
+  ) %>% 
+  mutate(
+    protein_g_cap_year = protein_g_cap_day * 365,
+    kcal_cap_year = kcal_cap_day * 365
+  ) %>% 
+  #left_join(., data, by = c("area" = "country.name.en")) %>% 
+  full_join(., country_codes, by = "area") %>% 
+  rename(fixed_country_name = new_country) %>%  
+  filter(!is.na(iso3n))
+```
+
+# Join this data to our target spatial dataset
+
+```{r}
+national_cal_full <- sf::st_read(world_vector_fn) %>% 
+  sf::st_set_geometry(NULL) %>% 
+  group_by(ISO3) %>% 
+  count() %>%
+  ungroup() %>% 
+  select(-n) %>% 
+  left_join(national_cal, by = c("ISO3" = "iso3c"))
+```
+
+
+# get gdp measurements
+
+```{r}
+ppp <- WDI(country = "all", indicator = c("NY.GDP.MKTP.PP.CD", "NY.GDP.MKTP.CD", "NY.GDP.PCAP.CD"), start = NULL,
+  end = NULL, extra = FALSE, cache = NULL) %>% 
+  filter(year == 2013) %>% 
+  dplyr::select(-year)
+
+prot <- national_cal_full %>% 
+  mutate(iso2c = countrycode(ISO3, origin = "iso3c", destination = "iso2c", warn = TRUE, nomatch = NA,
+  custom_dict = NULL, custom_match = NULL, origin_regex = FALSE)) %>% 
+  left_join(ppp)
+
+
+write_csv(prot, protein_gdp_fn)
+```
+
+

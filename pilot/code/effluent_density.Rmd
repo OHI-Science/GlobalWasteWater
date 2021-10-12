@@ -1,0 +1,55 @@
+---
+title: "Effluent Density"
+author: "Jared Kibele"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    pandoc_args: ["--output=../docs/effluent_density.html"]
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+```
+
+<!--
+Ultimately, we want to generate a raster of how much excreta is entering the ocean at coastal pour points and 
+model the plumes in the ocean. 
+We're starting with national level data on proportions of treatement levels, population density, and watersheds 
+(datasets discussed [here](https://github.com/jkibele/wastewater/issues/1)). 
+I think the first step in this process is to convert the population density raster into what I'm calling effluent density. 
+Basically it's intended to represent how many people are pooping in a given location, 
+but modified by the reduction of excreta determined by sanitation in the country where those people live. 
+I'm planning to calculate it by the following steps:
+
+1. Map the 5 sanitation categories from the WHO/Unicef [data](https://github.com/jkibele/wastewater/issues/3#issuecomment-460335655) to a set of "sanitation factors" based on [Kay et al., 2008](https://github.com/jkibele/wastewater/issues/3#issue-402495556). I need to do more reading, but I'm thinking the sanitation factors ($ff_{category}$) will range from 1.0 (no reduction in excreta) for "open defication" to (just a random placeholder guess) 0.3 (70% reduction) for "Safely Managed". I need to go back and read Kay et al. with this idea in mind to pick a reasonalbe set of sanitation factors. Once we have the set of sanitation factors, we can use the sanitation category proportions to come up with a national weighted average sanitation factor for each country ($ff_{country}$). 
+2. Then we can assign the $ff$s to a vector of countries, and rasterize that to match the extent and resolution of our population density raster.
+3. Then we can just multiply the $ff_{country}$ raster by the population density raster. That will give us a global effluent density raster.
+
+Once we've got the effluent density, we can go on sum the effluent output by watershed, assign it to pour points, and calculate the plumes.
+
+## 1) Developing National Sanitation Factors
+
+Map santiation categories to $ff_{category}$. As a first pass, I'm only going to deal with the national figures that do not separate rural and urban. ~~If we had a global rural/urban dataset (maybe based on land cover), we could refine this a bit~~. (too much missing data for that) But, for now, I'm just going to read the part of the spreadsheet that has the national level data. I'm also going to just focus on 2015 values (that's what the [pop density data](https://github.com/jkibele/wastewater/issues/1#issuecomment-459908336) is adjusted to reflect.)
+ -->
+
+## Effluent Raster
+
+```{r effluent_raster_setup, message=FALSE, warning=FALSE}
+source("./file_names.R")
+```
+
+
+```{bash effluent_raster}
+gdal_calc.py --co NUM_THREADS=4 --NoDataValue=0 -F $FF_RASTER_FN -P $POP_FN --outfile=$EFFLUENT_FN --calc="F*P" --overwrite
+```
+
+```{r plot_effluent}
+library(raster)
+effluent <- raster(effluent_fn)
+
+pp_palette <- colorRampPalette(c("yellow","brown"), bias=1)
+brk <- seq(0, 300, length.out = 9)
+effluent %>% 
+  plot(col=pp_palette(9), breaks=brk)
+```
+
