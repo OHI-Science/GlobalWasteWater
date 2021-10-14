@@ -13,7 +13,7 @@ gdaldem color-relief -of GTiff ../interim/effluent_N_septic_log10.tif ../interim
 # Effluent treated
 gdaldem color-relief -of GTiff ../interim/effluent_N_treated_log10.tif ../interim/N_colors.txt effluent_N_treated_log10_colored.tif -alpha
 # Plumes
-gdaldem color-relief -of GTiff N_uhoh/N_global_plume_effluent_2015.tif ../interim/Nplume_color.txt N_global_plume_effluent_2015_colored.tif -alpha
+gdaldem color-relief -of GTiff N_effluent_output/global_effluent_2015_tot_N.tif ../interim/Nplume_color.txt N_global_plume_effluent_2015_colored.tif -alpha
 
 ### FIOs
 # Effluent
