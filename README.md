@@ -2,7 +2,9 @@
 
 This is an inherently interdisciplinary work where Geographers, Environmental scientists, and Conservation scientists came together to bring the best of each discipline. As such, we also bring our own coding idiosyncrasies to the table, and you will find a combination of R, Python, and bash scripts in this repository. Neither of us is an expert on all languages, but we are all comfortable reading each others' code. We have done our best to document the repository, and structure it in an intuitive and language-agnostic way. This should help make it readable and, more importantly, reproducible.
 
-Reference: to be added upon publication.
+Reference: Tuholske, C., Halpern, B. S., Blasco, G., Villasenor, J. C., Frazier, M., & Caylor, K. (2021). Mapping global inputs and impacts from of human sewage in coastal ecosystems. PloS one, 16(11), e0258898. [https://doi.org/10.1371/journal.pone.0258898](https://doi.org/10.1371/journal.pone.0258898)
+
+**ALL FINAL DATA IS AVAILABLE HERE: [https://knb.ecoinformatics.org/view/doi:10.5063/F76B09](https://knb.ecoinformatics.org/view/doi:10.5063/F76B09)**
 
 ## Repository structure
 
